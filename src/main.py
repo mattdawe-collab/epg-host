@@ -2,12 +2,11 @@ import os
 import json
 import requests
 import gzip
-import email.utils
 from lxml import etree
-from fuzzywuzzy import process, fuzz
-from dotenv import load_dotenv
+from fuzzywuzzy import process
 from tqdm import tqdm
-import ai_client
+from dotenv import load_dotenv
+import ai_client  # Ensure this matches your ai_client.py file
 
 load_dotenv()
 
@@ -16,256 +15,155 @@ XC_URL = os.getenv("XC_URL")
 XC_USER = os.getenv("XC_USERNAME")
 XC_PASS = os.getenv("XC_PASSWORD")
 OUTPUT_FILE = os.getenv("OUTPUT_PATH", "./data/epg_repair.xml")
-OVERRIDES_FILE = "./custom_overrides.json"
 KNOWN_MATCHES_FILE = "./data/known_matches.json"
 MISSING_LOG = "./logs/missing_channels.txt"
 CACHE_DIR = "./data/cache"
+PRIORITY_CATEGORIES = ["US|", "CA|", "UK|"]
 
 # --- SOURCES ---
 REFERENCE_SOURCES = [
-    "https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz",
-    "https://iptv-org.github.io/epg/xml/ca.xml",
-    "https://iptv-org.github.io/epg/xml/us.xml",
-    "https://iptv-org.github.io/epg/xml/uk.xml"
+    ("https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz", "all_sources.xml.gz"),
+    ("https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz", "us_locals.xml.gz"),
+    ("https://epghub.xyz/epg/EPG-CA.xml.gz", "epg_canada.xml.gz")
 ]
 
-# --- 1. THE "KILL" LIST (Higher Priority) ---
-# If a category matches ANY of these, it dies immediately.
-FOREIGN_BLOCKLIST = [
-    "AR|", "ARABIC", "UAE", "KSA",         # Arabic
-    "FR|", "FRANCE", "BELGIUM",            # French
-    "DE|", "GERMANY", "GERMAN",            # German
-    "IT|", "ITALY",                        # Italian
-    "RU|", "RUSSIA",                       # Russian
-    "TR|", "TURKEY",                       # Turkish
-    "ES|", "SPAIN", "SPANISH",             # Spanish (Euro)
-    "PT|", "PORTUGAL",                     # Portuguese
-    "PL|", "POLAND",                       # Polish
-    "LAT|", "LATINO", "MX|", "MEXICO",     # Latin America
-    "BR|", "BRAZIL",                       # Brazil
-    "IN|", "INDIA", "HINDI", "PAK|",       # India/Pakistan
-    "CN|", "CHINA",                        # China
-    "VN|", "VIETNAM",                      # Vietnam
-    "GR|", "GREECE",                       # Greece
-    "AL|", "ALBANIA",                      # Albania
-    "EX-YU", "BALKAN"                      # Balkans
-]
-
-# --- 2. THE JUNK LIST (Clean up the rest) ---
-IGNORE_JUNK = [
-    "24/7", "LOOP", "VOD", "RADIO", "ADULT", "XXX", "MUSIC VIDEO", 
-    "RAW", "DIRECTORS CUT", "CINEMA", "PPV", "CHRISTMAS", "HALLOWEEN"
-]
-
-# --- 3. THE "KEEP" LIST (Lowest Priority) ---
-TARGET_REGIONS = [
-    "US|", "USA", "AMERICA",               # USA
-    "CA|", "CAN", "CDN", "CANADA",         # Canada
-    "UK|", "GB|", "BRITAIN", "KINGDOM",    # UK
-    "EN|", "ENGLISH",                      # Generic English
-    "NHL", "NFL", "NBA", "MLB", "SPORTS"   # Sports
-]
-
-def load_json_file(filepath):
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            pass
-    return {}
-
-def save_json_file(filepath, data):
+def fetch_playlist():
+    url = f"{XC_URL}/player_api.php?username={XC_USER}&password={XC_PASS}&action=get_live_streams"
     try:
-        existing = load_json_file(filepath)
-        existing.update(data)
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(existing, f, indent=2)
+        response = requests.get(url, timeout=30)
+        return response.json()
     except Exception as e:
-        print(f"[!] Error saving {filepath}: {e}")
-
-def get_xc_data():
-    base_url = XC_URL.strip()
-    if not base_url.startswith("http"):
-        base_url = f"http://{base_url}"
-    
-    print(f"[*] Connecting to {base_url}...")
-    try:
-        c_resp = requests.get(f"{base_url}/player_api.php?username={XC_USER}&password={XC_PASS}&action=get_live_categories", timeout=15)
-        c_map = {c['category_id']: c['category_name'] for c in c_resp.json()}
-        
-        s_resp = requests.get(f"{base_url}/player_api.php?username={XC_USER}&password={XC_PASS}&action=get_live_streams", timeout=45)
-        
-        filtered = []
-        stats = {"active": 0, "junk": 0, "foreign": 0, "other": 0}
-        
-        print("[-] Applying Strict Region Filters...")
-        for ch in tqdm(s_resp.json(), unit="ch"):
-            cat_name = c_map.get(ch.get('category_id'), "Uncategorized").upper()
-            
-            # 1. Check Foreign Blocklist (KILL)
-            if any(bad in cat_name for bad in FOREIGN_BLOCKLIST):
-                stats["foreign"] += 1
-                continue
-
-            # 2. Check Junk Blocklist (KILL)
-            if any(bad in cat_name for bad in IGNORE_JUNK):
-                stats["junk"] += 1
-                continue
-                
-            # 3. Check Target Whitelist (KEEP)
-            if not any(good in cat_name for good in TARGET_REGIONS):
-                stats["other"] += 1
-                continue
-
-            ch['category_name'] = cat_name
-            filtered.append(ch)
-            stats["active"] += 1
-                
-        print(f"[*] Filtering complete.")
-        print(f"    - Active Channels: {stats['active']}")
-        print(f"    - Blocked Foreign: {stats['foreign']} (Strict Mode)")
-        print(f"    - Blocked Junk:    {stats['junk']}")
-        return filtered
-    except Exception as e:
-        print(f"[!] Error fetching XC data: {e}")
+        print(f"Error fetching playlist: {e}")
         return []
 
-def download_and_parse(url):
-    filename = url.split('/')[-1]
-    local_path = os.path.join(CACHE_DIR, filename)
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    
-    headers = {}
-    if os.path.exists(local_path):
-        mtime = os.path.getmtime(local_path)
-        headers['If-Modified-Since'] = email.utils.formatdate(mtime, usegmt=True)
-
-    try:
-        resp = requests.get(url, headers=headers, timeout=180, stream=True)
-        content = None
-        
-        if resp.status_code == 304:
-            with open(local_path, 'rb') as f:
-                content = f.read()
-        elif resp.status_code == 200:
-            total_size = int(resp.headers.get('content-length', 0))
-            with open(local_path, 'wb') as f, tqdm(desc=filename, total=total_size, unit='iB', unit_scale=True, unit_divisor=1024) as bar:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    size = f.write(chunk)
-                    bar.update(size)
-            with open(local_path, 'rb') as f:
-                content = f.read()
-        else:
-            return {}
-
-        if filename.endswith('.gz') or (content and content[:2] == b'\x1f\x8b'):
-            try:
-                content = gzip.decompress(content)
-            except:
-                pass 
-
-        parser = etree.XMLParser(recover=True)
-        root = etree.fromstring(content, parser=parser)
-        
-        local_map = {}
-        for channel in root.findall('channel'):
-            dn = channel.find('display-name')
-            if dn is not None and dn.text:
-                local_map[dn.text] = channel.get('id')
-        return local_map
-
-    except Exception:
-        return {}
-
-def get_reference_data():
+def fetch_reference_data():
+    """Downloads and parses EPG sources into a name:id map."""
     master_map = {}
-    print(f"[*] Building Database...")
-    for url in REFERENCE_SOURCES:
-        data = download_and_parse(url)
-        master_map.update(data)
-    print(f"[*] Database Ready. {len(master_map)} unique IDs.")
+    if not os.path.exists(CACHE_DIR): os.makedirs(CACHE_DIR)
+    
+    for url, filename in REFERENCE_SOURCES:
+        path = os.path.join(CACHE_DIR, filename)
+        try:
+            print(f"[*] Fetching {filename}...")
+            r = requests.get(url, stream=True)
+            with open(path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+            
+            with gzip.open(path, 'rb') as f:
+                # Using iterative parsing to save memory on large XMLs
+                context = etree.iterparse(f, events=('end',), tag='channel')
+                for event, elem in context:
+                    channel_id = elem.get('id')
+                    for display_name in elem.findall('display-name'):
+                        if display_name.text:
+                            master_map[display_name.text.strip()] = channel_id
+                    elem.clear()
+                    while elem.getprevious() is not None:
+                        del elem.getparent()[0]
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
     return master_map
 
 def main():
-    ai_client.setup_gemini()
-    my_channels = get_xc_data()
-    ref_data = get_reference_data()
-    manual_overrides = load_json_file(OVERRIDES_FILE)
-    known_matches = load_json_file(KNOWN_MATCHES_FILE)
-    
-    if not my_channels or not ref_data:
-        return
+    playlist = fetch_playlist()
+    if not playlist: return
 
-    ref_names = list(ref_data.keys())
-    matches = {} 
-    missing_list = []
-    stats = {"known": 0, "auto": 0, "ai": 0, "manual": 0}
+    # Load Databases
+    known_matches = {}
+    if os.path.exists(KNOWN_MATCHES_FILE):
+        with open(KNOWN_MATCHES_FILE, 'r', encoding='utf-8') as f:
+            known_matches = json.load(f)
 
-    print(f"[*] Starting Analysis on {len(my_channels)} channels...")
-    pbar = tqdm(my_channels, unit="ch", desc="Matching", dynamic_ncols=True)
-    
-    for ch in pbar:
-        name = ch.get('name', 'Unknown')
-        cat = ch.get('category_name', 'Unknown')
+    known_missing = set()
+    if os.path.exists(MISSING_LOG):
+        with open(MISSING_LOG, 'r', encoding='utf-8') as f:
+            known_missing = {line.strip() for line in f if line.strip()}
+
+    reference_data = fetch_reference_data()
+    ref_names = list(reference_data.keys())
+
+    # Build filtered target list (NA and UK only)
+    target_playlist = [
+        ch for ch in playlist 
+        if any(cat in ch.get('name', '') for cat in PRIORITY_CATEGORIES)
+    ]
+
+    final_matches = {}
+    new_missing = []
+    stats = {"known": 0, "auto": 0, "ai": 0, "skipped": 0, "stale": 0}
+
+    pbar = tqdm(target_playlist, unit="ch")
+    for channel in pbar:
+        name = channel.get('name', '').strip()
         
+        # 1. VALIDATION: Check Known Matches
         if name in known_matches:
-            matches[name] = known_matches[name]
-            stats["known"] += 1
-            continue
-            
-        if name in manual_overrides:
-            matches[name] = manual_overrides[name]
-            stats["manual"] += 1
+            target_id = known_matches[name]
+            # Ensure the ID still exists in the fresh weekly source
+            if target_id in reference_data.values():
+                final_matches[name] = target_id
+                stats["known"] += 1
+                continue
+            else:
+                stats["stale"] += 1
+                tqdm.write(f"⚠️  STALE ID: {name} ({target_id} not in source). Rematching...")
+                del known_matches[name]
+
+        # 2. ENERGY SAVER: Check Known Missing
+        if name in known_missing:
+            new_missing.append(name)
+            stats["skipped"] += 1
             continue
 
-        best_candidates = process.extract(name, ref_names, limit=5, scorer=fuzz.token_sort_ratio)
-        valid_candidates = [match[0] for match in best_candidates if match[1] > 60]
+        # 3. DISCOVERY: Fuzzy Match
+        best_id = None
+        # Limit fuzzy search to 5 candidates for AI to review
+        matches = process.extract(name, ref_names, limit=5)
+        top_match, top_score = matches[0]
 
-        if not valid_candidates:
-            missing_list.append(f"{name} | {cat}")
-            continue
-
-        # Auto-Match 95%
-        if best_candidates[0][1] >= 95:
-            matches[name] = ref_data[best_candidates[0][0]]
+        if top_score >= 98:
+            best_id = reference_data[top_match]
             stats["auto"] += 1
-            continue
+        elif top_score > 35:
+            # AI Consultation for edge cases (FanDuel, Locals, etc)
+            pbar.set_description(f"AI Thinking: {name[:15]}")
+            candidates = {m[0]: reference_data[m[0]] for m in matches}
+            best_id = ai_client.get_best_match(name, candidates)
+            if best_id:
+                tqdm.write(f"✅ AI MATCH: [{name}] -> {best_id}")
+                stats["ai"] += 1
 
-        candidate_objs = { cn: ref_data[cn] for cn in valid_candidates }
-        if name in matches:
-            continue
-
-        best_id = ai_client.get_best_match(name, candidate_objs)
         if best_id:
-            tqdm.write(f"    [AI MATCH] {name} -> {best_id}")
-            matches[name] = best_id
-            stats["ai"] += 1
+            final_matches[name] = best_id
+            known_matches[name] = best_id
         else:
-            missing_list.append(f"{name} | {cat}")
+            new_missing.append(name)
 
-    if matches:
-        root = etree.Element("tv")
-        for name, xml_id in matches.items():
-            c_tag = etree.SubElement(root, "channel", id=xml_id)
-            dn_tag = etree.SubElement(c_tag, "display-name")
-            dn_tag.text = name 
-        tree = etree.ElementTree(root)
-        try:
-            os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-            tree.write(OUTPUT_FILE, encoding='utf-8', xml_declaration=True, pretty_print=True)
-            save_json_file(KNOWN_MATCHES_FILE, matches)
-            print(f"\n[*] SUCCESS: {len(matches)} channels processed.")
-            print(f"    - From Memory: {stats['known']}")
-            print(f"    - Auto Matched: {stats['auto']}")
-            print(f"    - AI Matched: {stats['ai']}")
-        except Exception as e:
-            print(f"[!] Save Error: {e}")
-            
-    if missing_list:
-        os.makedirs(os.path.dirname(MISSING_LOG), exist_ok=True)
-        with open(MISSING_LOG, 'w', encoding='utf-8') as f:
-            for item in missing_list: f.write(f"{item}\n")
+    # --- SAVING & CLEANUP ---
+    # Save Match Database
+    with open(KNOWN_MATCHES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(known_matches, f, indent=4)
+
+    # Save CLEAN Missing Log (No headers, sorted)
+    clean_missing = sorted(list(set([
+        m for m in new_missing 
+        if any(reg in m for reg in PRIORITY_CATEGORIES) and not m.startswith("#")
+    ])))
+    with open(MISSING_LOG, 'w', encoding='utf-8') as f:
+        f.write("\n".join(clean_missing))
+
+    # Generate XMLTV
+    root = etree.Element("tv")
+    for ch_name, xml_id in final_matches.items():
+        c_tag = etree.SubElement(root, "channel", id=xml_id)
+        dn_tag = etree.SubElement(c_tag, "display-name")
+        dn_tag.text = ch_name
+    
+    tree = etree.ElementTree(root)
+    tree.write(OUTPUT_FILE, pretty_print=True, xml_declaration=True, encoding="utf-8")
+
+    print(f"\n[!] Done! Found {len(final_matches)} matches. Logged {len(clean_missing)} misses.")
+    print(f"Stats: Known={stats['known']}, Auto={stats['auto']}, AI={stats['ai']}, Stale_Fixed={stats['stale']}, Skipped={stats['skipped']}")
 
 if __name__ == "__main__":
     main()
