@@ -1,146 +1,157 @@
-import os
 import json
-import urllib.request
-import xml.etree.ElementTree as ET
-from difflib import get_close_matches
-import gzip
-import io
-import gc
+import os
+import time
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-# --- CONFIGURATION ---
-MISSING_FILE = r'data/logs/priority_missing.txt'
-OUTPUT_FILE = r'data/known_matches.json'
+# --- CONFIGURATION (DYNAMIC PATHS) ---
+load_dotenv()
 
-# THE WORKING SOURCE LIST
-EXTERNAL_SOURCES = {
-    # 1. THE MEGA DATABASE (Crucial: This contains US, UK, CA, and Locals all in one)
-    "Mega_Database": "https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz",
+# 1. Find where this script file is located
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    # 2. FAST CHANNELS (These cover the "Raw" and "Backup" channels often missing from the main list)
-    "PlutoTV_US": "https://i.mjh.nz/PlutoTV/us.xml.gz",
-    "SamsungTV_US": "https://i.mjh.nz/SamsungTVPlus/us.xml.gz",
-    "Plex_US": "https://i.mjh.nz/Plex/us.xml.gz",
-    
-    # 3. OPEN-EPG (The replacement for Bevy - good backup for US/CA/UK)
-    "OpenEPG_US": "https://www.open-epg.com/files/unitedstates1.xml.gz",
-    "OpenEPG_UK": "https://www.open-epg.com/files/uk1.xml.gz",
-    "OpenEPG_CA": "https://www.open-epg.com/files/canada1.xml.gz"
-}
+# 2. Go up one level to find the project root
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
-def clean_channel_name(name):
+# 3. Build paths relative to the Project Root
+INPUT_FILE = os.path.join(PROJECT_ROOT, "logs", "high_priority_hunt.txt")
+OUTPUT_FILE = os.path.join(PROJECT_ROOT, "suggested_matches.json")
+KNOWN_MATCHES = os.path.join(PROJECT_ROOT, "data", "known_matches.json")
+
+BATCH_SIZE = 20
+
+# Gemini Setup
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    api_key = os.getenv("GOOGLE_API_KEY")
+
+if not api_key:
+    print("Error: GEMINI_API_KEY not found in environment variables.")
+    exit(1)
+
+genai.configure(api_key=api_key)
+
+try:
+    # UPDATED: Using the Gemini 3 Flash Preview model as requested
+    model = genai.GenerativeModel("gemini-3-flash-preview")
+except Exception as e:
+    print(f"Error initializing model: {e}")
+    exit(1)
+
+def load_json(filepath):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_json(filepath, data):
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
+
+def hunt_batch(batch_channels, existing_suggestions):
+    # Double check we haven't already suggested these in this session
+    to_ask = [c for c in batch_channels if c not in existing_suggestions]
+    if not to_ask:
+        return {}
+
+    # --- PROMPT: Aggressive on Local/City matches ---
+    prompt = f"""
+    I have a list of TV channel identifiers from an IPTV playlist. 
+    Map each one to the most likely standard XMLTV ID.
+
+    CRITICAL RULES FOR LOCALS:
+    1. IF A CITY IS LISTED, FIND THE SPECIFIC STATION CALLSIGN.
+       - "CBC Fredericton" -> "CBAT.ca" (NOT CBC.ca)
+       - "CTV Calgary" -> "CFCN.ca" (NOT CTV.ca)
+       - "ABC New York" -> "WABC.us" (NOT ABC.us)
+       - "NBC Los Angeles" -> "KNBC.us"
+    2. Only use the generic National feed (e.g., "CBC.ca", "Global.ca") if NO city is mentioned.
+    3. Ignore decorations like "#####", "| US |", "FHD", "HEVC".
+    4. Return ONLY valid JSON: {{ "Input Name": "xmltv.id" }}
+
+    Channels to map:
+    {json.dumps(to_ask)}
     """
-    Transforms complex playlist names into simple matchable names.
-    Example: 'US| VSIN | US| SPORTS NETWORK' -> 'VSIN'
-    """
-    # 1. Remove standard prefixes first
-    remove_list = [
-        "US|", "UK|", "CA|", "RO|", "DE|", "FR|", "IT|", "ES|",
-        "#####", "FHD", "HD", "HEVC", "1080p", "Backup", "RAW", 
-        "50fps", "60fps", "VIX+", "LOCALS", "NETWORK"
-    ]
-    clean = name.upper()
-    for item in remove_list:
-        clean = clean.replace(item, "")
-    
-    # 2. KEY FIX: Split by pipe '|' and take the first part
-    # This removes the trailing category info found in your log file
-    if "|" in clean:
-        clean = clean.split("|")[0]
 
-    # 3. Final cleanup of whitespace and punctuation
-    return clean.strip(" -.")
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
+    except Exception as e:
+        print(f"  [!] Batch failed. Error: {e}")
+        return {}
 
-def stream_and_hunt():
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    missing_path = os.path.join(base_dir, "logs", "priority_missing.txt")
-    output_path = os.path.join(base_dir, "data", "known_matches.json")
+def main():
+    print(f"--- PATH DEBUG ---")
+    print(f"Script Location: {SCRIPT_DIR}")
+    print(f"Project Root:    {PROJECT_ROOT}")
+    print(f"Looking for input at: {INPUT_FILE}")
+    print("-" * 50)
 
-    if not os.path.exists(missing_path):
-        print("Could not find priority_missing.txt.")
+    if not os.path.exists(INPUT_FILE):
+        print(f"Error: Input file not found at: {INPUT_FILE}")
         return
 
-    # --- STEP 1: LOAD TARGETS ---
-    missing_map = {} 
-    print("--- LOADING MISSING CHANNELS ---")
-    with open(missing_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            # Skip headers and empty lines
-            if line and "#####" not in line and "---" not in line:
-                clean = clean_channel_name(line)
-                if len(clean) > 1:
-                    missing_map[clean] = line
+    # Load all raw channels
+    with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+        all_channels = [line.strip() for line in f if line.strip()]
 
-    print(f"Loaded {len(missing_map)} unique missing targets to hunt for.")
+    # Load history
+    suggestions = load_json(OUTPUT_FILE)
+    known = load_json(KNOWN_MATCHES)
     
-    # --- STEP 2: STREAM SOURCES ---
-    found_matches = {}
-    
-    for source_name, url in EXTERNAL_SOURCES.items():
-        print(f"\nProcessing Source: {source_name}...")
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            req = urllib.request.Request(url, headers=headers)
-            
-            with urllib.request.urlopen(req) as response:
-                # Handle GZIP compression automatically
-                with gzip.GzipFile(fileobj=response) as gz:
-                    # iterparse streams the file element by element
-                    context = ET.iterparse(gz, events=("end",))
-                    
-                    count = 0
-                    local_matches = 0
-                    
-                    for event, elem in context:
-                        if elem.tag == 'channel':
-                            count += 1
-                            
-                            epg_id = elem.get('id')
-                            display_name = elem.find('display-name')
-                            
-                            if display_name is not None and display_name.text and epg_id:
-                                # Clean the EPG name to match our target format
-                                epg_name_raw = display_name.text.strip().upper()
-                                
-                                # EXACT MATCH CHECK
-                                if epg_name_raw in missing_map:
-                                    original_name = missing_map[epg_name_raw]
-                                    
-                                    # Only add if we haven't found it yet
-                                    if original_name not in found_matches:
-                                        found_matches[original_name] = epg_id
-                                        local_matches += 1
-                                        print(f"  [MATCH] {original_name} -> {epg_id}")
-                            
-                            # FREE MEMORY (Crucial for large files)
-                            elem.clear()
-                            
-                    print(f"  -> Scanned {count} channels. Found {local_matches} matches.")
-                    del context # Force cleanup
-                    gc.collect()
+    # --- SMART FILTER LOGIC ---
+    count_total = len(all_channels)
+    count_known = 0
+    count_suggested = 0
+    work_list = []
 
-        except Exception as e:
-            print(f"  -> Error reading {source_name}: {e}")
+    # Check each channel against BOTH history files
+    for c in all_channels:
+        if c in known:
+            count_known += 1
+            continue
+        if c in suggestions:
+            count_suggested += 1
+            continue
+        work_list.append(c)
+    
+    print(f"Total Input Channels:      {count_total}")
+    print(f"Skipped (Already Known):   {count_known}")
+    print(f"Skipped (Already In File): {count_suggested}")
+    print(f"-------------------------------------------")
+    print(f"ACTUAL NEW WORK REMAINING: {len(work_list)}")
+    print(f"-------------------------------------------")
 
-    # --- STEP 3: SAVE RESULTS ---
-    print(f"\n==========================================")
-    print(f"HUNT COMPLETE.")
-    print(f"New Matches Found: {len(found_matches)}")
-    
-    # Load existing matches to merge
-    existing = {}
-    if os.path.exists(output_path):
-        with open(output_path, 'r', encoding='utf-8') as f:
-            existing = json.load(f)
-    
-    existing.update(found_matches)
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(existing, f, indent=4)
+    if not work_list:
+        print("Nothing new to hunt! Great job.")
+        return
+
+    # Process in batches
+    for i in range(0, len(work_list), BATCH_SIZE):
+        batch = work_list[i : i + BATCH_SIZE]
+        print(f"\nHunting Batch {i//BATCH_SIZE + 1} ({len(batch)} channels)...")
         
-    print(f"Total Database Size: {len(existing)}")
-    print(f"Updated: {output_path}")
-    print(f"==========================================")
+        new_matches = hunt_batch(batch, suggestions)
+        
+        if new_matches:
+            suggestions.update(new_matches)
+            save_json(OUTPUT_FILE, suggestions)
+            
+            print(f"  + Found {len(new_matches)} matches:")
+            for channel, xmlid in new_matches.items():
+                print(f"    - {channel}  ->  {xmlid}") 
+
+        else:
+            print("  - No matches found in this batch.")
+        
+        # Polite delay
+        time.sleep(1)
+
+    print(f"\nDone! Saved to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
-    stream_and_hunt()
+    main()

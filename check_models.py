@@ -1,11 +1,13 @@
-from google import genai
+import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-print("--- AVAILABLE MODELS ---")
-for m in client.models.list():
-    if "flash" in m.name:
-        print(f"ID: {m.name} | Display: {m.display_name}")
+print("Available Models for your Key:")
+for m in genai.list_models():
+    if 'generateContent' in m.supported_generation_methods:
+        # We only care about models that start with 'gemini'
+        if 'gemini' in m.name:
+            print(f"- {m.name}")

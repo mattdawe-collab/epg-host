@@ -11,8 +11,8 @@ cd "$PROJECT_DIR" || { echo "Directory not found"; exit 1; }
 # 1. Pull latest code
 "$GIT_BIN" pull origin main
 
-# 2. Run the Python script (Quotes are CRITICAL here)
-"$PYTHON_BIN" main.py
+# 2. Run the Python script (Updated path: src/main.py)
+"$PYTHON_BIN" src/main.py
 
 # 3. Automation Push
 "$GIT_BIN" add .
