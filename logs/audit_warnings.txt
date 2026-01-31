@@ -1,0 +1,7 @@
+# EPG Match Audit Warnings
+# Generated: 2026-01-30 18:50:19
+
+US| ABC 22 BURLINGTON VT (WVNY) → ABC (WVNY) Burlington, VT HD.ca: REGION: US channel mapped to .ca ID
+US| CBS 3 BURLINGTON VT (WCAX) → CBS (WCAX) Burlington, VT HD.ca: REGION: US channel mapped to .ca ID
+US| FOX 44 BURLINGTON VT (WFFF) → FOX (WFFF) Burlington, VT HD.ca: REGION: US channel mapped to .ca ID
+US| NBC 5 PLATTSBURGH NY (WPTZ) → NBC (WPTZ) Plattsburg, NY HD.ca: REGION: US channel mapped to .ca ID
