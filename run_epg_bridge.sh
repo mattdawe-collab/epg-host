@@ -7,7 +7,7 @@ set -o pipefail
 
 # --- PATHS (QNAP-specific) ---
 PROJECT_DIR="/share/CACHEDEV2_DATA/Python Projects/AI_EPG_Bridge"
-PYTHON_BIN="$PROJECT_DIR/venv_nas/bin/python3"
+PYTHON_BIN="/share/CACHEDEV2_DATA/.qpkg/Python3/opt/python3/bin/python3"
 GIT_BIN="/share/CACHEDEV1_DATA/.qpkg/QGit/bin/git"
 
 # Move to project directory
