@@ -4,6 +4,7 @@ import json
 import requests
 import gzip
 import re
+from copy import deepcopy
 from lxml import etree
 from fuzzywuzzy import process
 from tqdm import tqdm
@@ -330,15 +331,22 @@ def main():
     
     valid_xml_ids = set(final_matches.values())
 
+    # Build reverse map: xml_id -> list of M3U channel names
+    # (multiple M3U channels can share the same EPG source)
+    xml_id_to_names = {}
+    for ch_name, xml_id in final_matches.items():
+        xml_id_to_names.setdefault(xml_id, []).append(ch_name)
+
     with gzip.open(OUTPUT_GZ, 'wb') as f:
         with etree.xmlfile(f, encoding='utf-8') as xf:
             with xf.element('tv'):
+                # Use M3U channel name as the channel ID so TiviMate can match
                 for ch_name, xml_id in final_matches.items():
-                    ch_elem = etree.Element('channel', id=xml_id)
+                    ch_elem = etree.Element('channel', id=ch_name)
                     dn = etree.SubElement(ch_elem, 'display-name')
                     dn.text = ch_name
                     xf.write(ch_elem)
-                
+
                 for url, filename in REFERENCE_SOURCES:
                     path = os.path.join(CACHE_DIR, filename)
                     try:
@@ -346,8 +354,13 @@ def main():
                         with gzip.open(path, 'rb') as source_f:
                             context = etree.iterparse(source_f, events=('end',), tag='programme')
                             for event, elem in context:
-                                if elem.get('channel') in valid_xml_ids:
-                                    xf.write(elem)
+                                orig_id = elem.get('channel')
+                                if orig_id in valid_xml_ids:
+                                    # Write a copy for each M3U channel that uses this EPG source
+                                    for ch_name in xml_id_to_names.get(orig_id, []):
+                                        prog_copy = deepcopy(elem)
+                                        prog_copy.set('channel', ch_name)
+                                        xf.write(prog_copy)
                                 elem.clear()
                                 while elem.getprevious() is not None:
                                     del elem.getparent()[0]
