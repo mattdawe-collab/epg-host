@@ -1,7 +1,16 @@
 .env
 venv/
+venv_nas/
 __pycache__/
-*.log
-data/cache/src/data/cache/
 
+# Logs (except missing_channels.txt which is tracked)
+*.log
+logs/install_check.lock
+logs/full_run_log.txt
+
+# Cache directories
 **/cache/
+
+# Junk files
+*.zip
+src/New Text Document.txt
