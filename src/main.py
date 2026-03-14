@@ -28,6 +28,7 @@ MISSING_LOG = os.path.join(PROJECT_ROOT, "logs", "missing_channels.txt")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "cache")
 
 PRIORITY_PREFIXES = ["US| ", "CA| ", "UK| "]
+OFFLINE_MODE = os.getenv("OFFLINE_MODE", "true").lower() in ("true", "1", "yes")
 
 # --- CONFIG ---
 SKIP_KNOWN_MISSING = False  # TEMPORARILY DISABLED to give AI a chance
@@ -131,13 +132,6 @@ def is_priority_channel(name):
     return False
 
 def main():
-    playlist = fetch_playlist()
-    if not playlist:
-        print("[ERROR] Failed to fetch playlist!")
-        sys.exit(1)
-
-    print(f"[*] Fetched {len(playlist)} total channels from IPTV provider")
-
     # 1. Load Databases
     known_matches = {}
     if os.path.exists(KNOWN_MATCHES_FILE):
@@ -155,6 +149,18 @@ def main():
                     print(f"[*] Added {len(suggestions)} AI suggestions")
         except (json.JSONDecodeError, IOError) as e:
             print(f"[WARNING] Could not load suggested_matches.json: {e}")
+
+    if OFFLINE_MODE:
+        print(f"\n[*] OFFLINE MODE: Using known matches as channel source (no IPTV fetch)")
+        # Use known_matches keys as the channel list
+        all_channel_names = [name for name in known_matches.keys() if not name.startswith("#")]
+    else:
+        playlist = fetch_playlist()
+        if not playlist:
+            print("[ERROR] Failed to fetch playlist!")
+            sys.exit(1)
+        print(f"[*] Fetched {len(playlist)} total channels from IPTV provider")
+        all_channel_names = [ch.get('name', '').strip() for ch in playlist]
 
     known_missing = set()
     if SKIP_KNOWN_MISSING and os.path.exists(MISSING_LOG):
@@ -182,12 +188,9 @@ def main():
     regional_maps = build_regional_maps(reference_data)
     print(f"[*] Regional maps: US={len(regional_maps['US'])}, CA={len(regional_maps['CA'])}, UK={len(regional_maps['UK'])}")
 
-    target_playlist = [
-        ch for ch in playlist
-        if is_priority_channel(ch.get('name', ''))
-    ]
+    target_names = [name for name in all_channel_names if is_priority_channel(name)]
 
-    print(f"\n[*] Processing {len(target_playlist)} priority channels (US|CA|UK)...")
+    print(f"\n[*] Processing {len(target_names)} priority channels (US|CA|UK)...")
 
     final_matches = {}
     new_missing = []
@@ -195,11 +198,9 @@ def main():
     stats = {"known": 0, "exact": 0, "ai": 0, "skipped": 0, "stale": 0}
 
     print("\n[PHASE 1] Quick wins (known matches + exact matches)...")
-    pbar = tqdm(target_playlist, unit="ch")
+    pbar = tqdm(target_names, unit="ch")
 
-    for channel in pbar:
-        name = channel.get('name', '').strip()
-
+    for name in pbar:
         # Check known database
         if name in known_matches:
             target_id = known_matches[name]
@@ -241,53 +242,59 @@ def main():
             stats["exact"] += 1
             continue
 
-        # Queue for AI
-        ai_queue.append(name)
+        # Queue for AI (only in online mode - offline mode skips AI)
+        if not OFFLINE_MODE:
+            ai_queue.append(name)
+        else:
+            new_missing.append(name)
 
-    print(f"\n[PHASE 2] AI matching for {len(ai_queue)} channels...")
-    print(f"[*] Processing ALL channels with Gemini 3 Flash (no limit)...")
+    if not OFFLINE_MODE:
+        print(f"\n[PHASE 2] AI matching for {len(ai_queue)} channels...")
+        print(f"[*] Processing ALL channels with Gemini 3 Flash (no limit)...")
 
-    if ai_queue:
-        ai_limit = MAX_AI_CALLS if MAX_AI_CALLS else len(ai_queue)
-        ai_subset = ai_queue[:ai_limit]
+        if ai_queue:
+            ai_limit = MAX_AI_CALLS if MAX_AI_CALLS else len(ai_queue)
+            ai_subset = ai_queue[:ai_limit]
 
-        ai_pbar = tqdm(ai_subset, unit="ch", desc="AI Matching")
+            ai_pbar = tqdm(ai_subset, unit="ch", desc="AI Matching")
 
-        for name in ai_pbar:
-            try:
-                core_name = extract_core_name(name)
+            for name in ai_pbar:
+                try:
+                    core_name = extract_core_name(name)
 
-                # Get regional candidates (pre-computed, instant lookup)
-                filtered_map = get_regional_map(name, regional_maps, reference_data)
-                filtered_names = list(filtered_map.keys())
+                    # Get regional candidates (pre-computed, instant lookup)
+                    filtered_map = get_regional_map(name, regional_maps, reference_data)
+                    filtered_names = list(filtered_map.keys())
 
-                search_pool = filtered_names if filtered_names else ref_names
+                    search_pool = filtered_names if filtered_names else ref_names
 
-                # Get top 15 fuzzy candidates (AI will pick from these)
-                candidates = process.extract(core_name, search_pool, limit=15)
+                    # Get top 15 fuzzy candidates (AI will pick from these)
+                    candidates = process.extract(core_name, search_pool, limit=15)
 
-                # Build candidate dict
-                candidate_dict = {match: (filtered_map if filtered_names else reference_data)[match]
-                                 for match, score in candidates}
+                    # Build candidate dict
+                    candidate_dict = {match: (filtered_map if filtered_names else reference_data)[match]
+                                     for match, score in candidates}
 
-                # Ask AI
-                result = ai_client.match_channel(name, candidate_dict)
+                    # Ask AI
+                    result = ai_client.match_channel(name, candidate_dict)
 
-                if result and result in valid_ids:
-                    final_matches[name] = result
-                    known_matches[name] = result
-                    stats["ai"] += 1
-                else:
+                    if result and result in valid_ids:
+                        final_matches[name] = result
+                        known_matches[name] = result
+                        stats["ai"] += 1
+                    else:
+                        new_missing.append(name)
+
+                except Exception as e:
+                    ai_pbar.write(f"[AI ERROR] {name}: {e}")
                     new_missing.append(name)
 
-            except Exception as e:
-                ai_pbar.write(f"[AI ERROR] {name}: {e}")
-                new_missing.append(name)
-
-        # Add remaining to missing if limit was reached
-        if MAX_AI_CALLS and len(ai_queue) > MAX_AI_CALLS:
-            print(f"\n[INFO] Processed {MAX_AI_CALLS} channels. {len(ai_queue) - MAX_AI_CALLS} remaining added to missing.")
-            new_missing.extend(ai_queue[MAX_AI_CALLS:])
+            # Add remaining to missing if limit was reached
+            if MAX_AI_CALLS and len(ai_queue) > MAX_AI_CALLS:
+                print(f"\n[INFO] Processed {MAX_AI_CALLS} channels. {len(ai_queue) - MAX_AI_CALLS} remaining added to missing.")
+                new_missing.extend(ai_queue[MAX_AI_CALLS:])
+    else:
+        print(f"\n[PHASE 2] Skipped (offline mode - no AI matching)")
 
     # Save results
     if not os.path.exists(os.path.dirname(KNOWN_MATCHES_FILE)):
