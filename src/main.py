@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import requests
 import gzip
@@ -41,14 +42,22 @@ REFERENCE_SOURCES = [
 ]
 
 def fetch_playlist():
-    """Fetch live streams from Xtream Codes API"""
+    """Fetch live streams from Xtream Codes API with retry."""
     url = f"{XC_URL}/player_api.php?username={XC_USER}&password={XC_PASS}&action=get_live_streams"
-    try:
-        response = requests.get(url, timeout=30)
-        return response.json()
-    except Exception as e:
-        print(f"Error fetching playlist: {e}")
-        return []
+    for attempt in range(3):
+        try:
+            response = requests.get(url, timeout=60)
+            return response.json()
+        except Exception as e:
+            if attempt < 2:
+                wait = 10 * (attempt + 1)
+                print(f"[WARNING] Playlist fetch failed (attempt {attempt + 1}/3): {e}")
+                print(f"          Retrying in {wait}s...")
+                import time
+                time.sleep(wait)
+            else:
+                print(f"[ERROR] Playlist fetch failed after 3 attempts: {e}")
+                return []
 
 def extract_core_name(channel_name):
     """
@@ -125,7 +134,7 @@ def main():
     playlist = fetch_playlist()
     if not playlist:
         print("[ERROR] Failed to fetch playlist!")
-        return
+        sys.exit(1)
 
     print(f"[*] Fetched {len(playlist)} total channels from IPTV provider")
 
