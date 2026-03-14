@@ -125,26 +125,26 @@ If NO valid match exists, return:
                 if selected in candidates.values():
                     confidence = result.get("confidence", "unknown")
                     reasoning = result.get("reasoning", "No reason given")
-                    print(f"  ✓ AI Match: {selected} [{confidence}] - {reasoning}")
+                    print(f"  [OK] AI Match: {selected} [{confidence}] - {reasoning}")
                     return selected
                 else:
-                    print(f"  ✗ AI returned invalid ID: {selected}")
+                    print(f"  [FAIL] AI returned invalid ID: {selected}")
                     return None
             else:
                 reasoning = result.get("reasoning", "No match found")
-                print(f"  ○ AI skipped: {reasoning}")
+                print(f"  [SKIP] AI skipped: {reasoning}")
                 return None
 
         except (json.JSONDecodeError, KeyError) as e:
-            print(f"  ✗ AI bad response: {e}")
+            print(f"  [FAIL] AI bad response: {e}")
             return None
         except Exception as e:
             if attempt < max_retries - 1:
                 wait = 2 ** (attempt + 1)
-                print(f"  ⟳ AI retry {attempt + 1}/{max_retries} in {wait}s: {e}")
+                print(f"  [RETRY] AI retry {attempt + 1}/{max_retries} in {wait}s: {e}")
                 time.sleep(wait)
             else:
-                print(f"  ✗ AI Error (after {max_retries} attempts): {e}")
+                print(f"  [FAIL] AI Error (after {max_retries} attempts): {e}")
                 return None
     return None
 

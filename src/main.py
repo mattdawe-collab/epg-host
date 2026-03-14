@@ -363,7 +363,7 @@ def main():
     print(f"Stale (removed): {stats['stale']}")
     print(f"Total matched: {len(final_matches)}")
     print(f"Missing: {len(clean_missing)} channels")
-    print(f"\nSuccess rate: {(len(final_matches) / len(target_playlist) * 100):.1f}%")
+    print(f"\nSuccess rate: {(len(final_matches) / len(target_names) * 100):.1f}%")
 
 if __name__ == "__main__":
     main()

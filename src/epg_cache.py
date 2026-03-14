@@ -38,11 +38,11 @@ def download_file(url: str, dest_path: str, timeout: int = 60) -> bool:
                     downloaded += len(chunk)
         
         size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-        print(f"    ✓ Downloaded: {size_mb:.1f} MB")
+        print(f"    [OK] Downloaded: {size_mb:.1f} MB")
         return True
         
     except Exception as e:
-        print(f"    ✗ Download failed: {e}")
+        print(f"    [FAIL] Download failed: {e}")
         return False
 
 
@@ -89,7 +89,7 @@ def parse_epg_channels(file_path: str, is_dummy_callback: Optional[Callable] = N
                     del elem.getparent()[0]
                     
     except Exception as e:
-        print(f"    ✗ Error parsing {file_path}: {e}")
+        print(f"    [FAIL] Error parsing {file_path}: {e}")
     
     return reference_data, valid_ids
 
@@ -152,7 +152,7 @@ def fetch_reference_data_smart(
         
         combined_valid_ids.update(valid_ids)
         
-        print(f"    ✓ Found {len(ref_data):,} display names, {len(valid_ids):,} channel IDs")
+        print(f"    [OK] Found {len(ref_data):,} display names, {len(valid_ids):,} channel IDs")
     
     print(f"\n  Total: {len(combined_reference_data):,} display names, {len(combined_valid_ids):,} unique channel IDs")
     
