@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -9,6 +10,7 @@ load_dotenv()
 
 # Singleton client - initialized once, reused across all calls
 _client = None
+BATCH_SIZE = int(os.getenv("AI_BATCH_SIZE", "15"))
 
 def get_client():
     global _client
@@ -19,52 +21,68 @@ def get_client():
         _client = genai.Client(api_key=api_key)
     return _client
 
+
+def _detect_region(name):
+    """Detect region from channel name prefix."""
+    if " US|" in name or "|US|" in name or name.startswith("US|"):
+        return "USA"
+    elif " CA|" in name or "|CA|" in name or name.startswith("CA|"):
+        return "CANADA"
+    elif " UK|" in name or "|UK|" in name or name.startswith("UK|"):
+        return "UK"
+    return "GLOBAL"
+
+
 def match_channel(target_name, candidates):
     """
-    MAIN FUNCTION: Selects the best EPG match from provided candidates.
-    Enforces strict region matching (US -> .us, CA -> .ca).
+    Single-channel match (legacy wrapper).
+    Calls batch internally with a single item.
     """
-    return get_best_match(target_name, candidates)
+    results = match_batch([(target_name, candidates)])
+    return results.get(target_name)
 
-def get_best_match(target_name, candidates):
+
+def match_batch(channel_candidate_pairs):
     """
-    Core matching logic with Gemini AI.
-    Enhanced for Canadian channel detection.
+    BATCH FUNCTION: Match multiple channels in a single AI call.
+
+    Args:
+        channel_candidate_pairs: list of (channel_name, candidate_dict) tuples
+
+    Returns:
+        dict of {channel_name: selected_id or None}
     """
+    if not channel_candidate_pairs:
+        return {}
+
     client = get_client()
     model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
 
-    # Detect region from input
-    target_region = "GLOBAL"
-    if " US|" in target_name or "|US|" in target_name:
-        target_region = "USA"
-    elif " CA|" in target_name or "|CA|" in target_name:
-        target_region = "CANADA"
-    elif " UK|" in target_name or "|UK|" in target_name:
-        target_region = "UK"
+    # Build the batch prompt
+    channels_block = []
+    all_candidates = {}  # track valid IDs per channel for validation
 
-    # Extract network hints for Canadian channels
-    network_hints = ""
-    if "CBC" in target_name.upper():
-        network_hints = "\n- CBC channels should map to CBC*.ca IDs"
-    elif "SPORTSNET" in target_name.upper():
-        network_hints = "\n- Sportsnet channels should map to Sportsnet*.ca IDs"
-    elif "CTV" in target_name.upper():
-        network_hints = "\n- CTV channels should map to CTV*.ca IDs"
-    elif "GLOBAL" in target_name.upper():
-        network_hints = "\n- Global channels should map to Global*.ca IDs"
+    for idx, (name, candidates) in enumerate(channel_candidate_pairs):
+        region = _detect_region(name)
+        all_candidates[name] = set(candidates.values())
 
-    prompt = f"""
-Act as a Broadcast Engineer. Map the SOURCE channel to the correct EPG ID.
+        # Build compact candidate list (name: id)
+        opts = {k: v for k, v in candidates.items()}
 
-SOURCE: "{target_name}"
-TARGET REGION: {target_region}
+        channels_block.append({
+            "index": idx,
+            "source": name,
+            "region": region,
+            "options": opts
+        })
+
+    prompt = f"""Act as a Broadcast Engineer. Map each SOURCE channel to the correct EPG ID from its OPTIONS.
 
 CRITICAL RULES:
 1. **REGION LOCK**:
-   - If SOURCE contains "| US|" → MUST prefer IDs ending in '.us' or '.com'
-   - If SOURCE contains "| CA|" → MUST prefer IDs ending in '.ca'
-   - If SOURCE contains "| UK|" → MUST prefer IDs ending in '.uk'
+   - USA region → MUST prefer IDs ending in '.us', '.us2', or '.com'
+   - CANADA region → MUST prefer IDs ending in '.ca'
+   - UK region → MUST prefer IDs ending in '.uk'
 
 2. **SUBCHANNEL AWARENESS**:
    - "WCIV.2" or "(D2)" in source → Prefer subchannel IDs (e.g., WCIV2.us)
@@ -73,7 +91,7 @@ CRITICAL RULES:
 3. **NETWORK MATCHING**:
    - "FOX" source → FOX affiliate ID, NOT CBS/NBC/ABC
    - "ABC" source → ABC affiliate ID, NOT FOX/CBS/NBC
-   - "CBS" source → CBS affiliate ID, NOT FOX/NBC/ABC{network_hints}
+   - CBC/CTV/Global/Sportsnet → prefer matching Canadian network IDs
 
 4. **AVOID GENERIC IDs**:
    - Prefer named IDs: "AMC.us" over "5e7cf123..."
@@ -83,27 +101,35 @@ CRITICAL RULES:
    - "Discovery" ≠ "Discovery Science"
    - "AMC" ≠ "AMC Plus"
    - "Sportsnet Ontario" ≠ "Sportsnet West"
+   - "West"/"Pacific" feeds are equivalent for US channels
 
-OPTIONS:
-{json.dumps(candidates, indent=2)}
+6. **WEST/PACIFIC FEEDS**:
+   - In US broadcasting, "West" = "Pacific" time zone feed
+   - "TNT WEST" should match "TNT HD (Pacific)"
 
-RESPOND ONLY WITH JSON:
-{{
-  "match_found": true,
-  "selected_id": "ExactID.domain",
-  "confidence": "high|medium|low",
-  "reasoning": "Brief explanation"
-}}
+CHANNELS TO MATCH:
+{json.dumps(channels_block, indent=1)}
 
-If NO valid match exists, return:
-{{
-  "match_found": false,
-  "selected_id": null,
-  "reasoning": "Why no match"
-}}
-"""
+RESPOND WITH A JSON ARRAY, one result per channel in order:
+[
+  {{
+    "index": 0,
+    "match_found": true,
+    "selected_id": "ExactID.domain",
+    "confidence": "high|medium|low",
+    "reasoning": "Brief explanation (1 sentence max)"
+  }},
+  {{
+    "index": 1,
+    "match_found": false,
+    "selected_id": null,
+    "reasoning": "Why no match (1 sentence max)"
+  }}
+]
 
-    # Retry with exponential backoff for transient failures
+Keep reasoning BRIEF - one sentence max per channel. Return ONLY the JSON array."""
+
+    # Retry with exponential backoff
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -116,37 +142,65 @@ If NO valid match exists, return:
                 )
             )
 
-            result = json.loads(response.text)
+            results_list = json.loads(response.text)
 
-            # Validate the AI's choice
-            if result.get("match_found") and result.get("selected_id"):
-                selected = result["selected_id"]
+            # Handle if Gemini wraps it in an object
+            if isinstance(results_list, dict) and "results" in results_list:
+                results_list = results_list["results"]
+            if not isinstance(results_list, list):
+                results_list = [results_list]
 
-                if selected in candidates.values():
-                    confidence = result.get("confidence", "unknown")
-                    reasoning = result.get("reasoning", "No reason given")
-                    print(f"  [OK] AI Match: {selected} [{confidence}] - {reasoning}")
-                    return selected
+            # Process results
+            output = {}
+            for result in results_list:
+                idx = result.get("index", -1)
+                if idx < 0 or idx >= len(channel_candidate_pairs):
+                    continue
+
+                name = channel_candidate_pairs[idx][0]
+
+                if result.get("match_found") and result.get("selected_id"):
+                    selected = result["selected_id"]
+                    valid_ids = all_candidates.get(name, set())
+
+                    if selected in valid_ids:
+                        confidence = result.get("confidence", "unknown")
+                        reasoning = result.get("reasoning", "")
+                        print(f"  [OK] {name[:40]:<40} → {selected} [{confidence}]")
+                        if reasoning:
+                            print(f"        {reasoning[:100]}")
+                        output[name] = selected
+                    else:
+                        print(f"  [FAIL] {name[:40]:<40} → Invalid ID: {selected}")
+                        output[name] = None
                 else:
-                    print(f"  [FAIL] AI returned invalid ID: {selected}")
-                    return None
-            else:
-                reasoning = result.get("reasoning", "No match found")
-                print(f"  [SKIP] AI skipped: {reasoning}")
-                return None
+                    reasoning = result.get("reasoning", "No match")
+                    print(f"  [SKIP] {name[:40]:<40} → {reasoning[:80]}")
+                    output[name] = None
+
+            # Fill in any channels the AI missed in its response
+            for name, _ in channel_candidate_pairs:
+                if name not in output:
+                    print(f"  [MISS] {name[:40]:<40} → AI did not return a result")
+                    output[name] = None
+
+            return output
 
         except (json.JSONDecodeError, KeyError) as e:
             print(f"  [FAIL] AI bad response: {e}")
-            return None
+            # Return all None
+            return {name: None for name, _ in channel_candidate_pairs}
         except Exception as e:
             if attempt < max_retries - 1:
                 wait = 2 ** (attempt + 1)
-                print(f"  [RETRY] AI retry {attempt + 1}/{max_retries} in {wait}s: {e}")
+                print(f"  [RETRY] Batch retry {attempt + 1}/{max_retries} in {wait}s: {e}")
                 time.sleep(wait)
             else:
                 print(f"  [FAIL] AI Error (after {max_retries} attempts): {e}")
-                return None
-    return None
+                return {name: None for name, _ in channel_candidate_pairs}
+
+    return {name: None for name, _ in channel_candidate_pairs}
+
 
 def brainstorm_ids(channel_name):
     """
@@ -157,7 +211,6 @@ def brainstorm_ids(channel_name):
         client = get_client()
         model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
 
-        # Detect region
         region_hint = ""
         if " CA|" in channel_name or "|CA|" in channel_name:
             region_hint = "Focus on Canadian (.ca) IDs."
@@ -179,7 +232,7 @@ EXAMPLES:
 
 RETURN ONLY JSON ARRAY OF STRINGS.
 """
-        
+
         response = client.models.generate_content(
             model=model,
             contents=prompt,
@@ -187,17 +240,18 @@ RETURN ONLY JSON ARRAY OF STRINGS.
                 response_mime_type="application/json"
             )
         )
-        
+
         suggestions = json.loads(response.text)
         if isinstance(suggestions, list):
             return suggestions
         return []
-        
+
     except Exception as e:
         print(f"Brainstorm error: {e}")
         return []
 
+
 # Legacy alias for backward compatibility
 def get_match(target_name, candidates):
     """Deprecated: Use match_channel() instead."""
-    return get_best_match(target_name, candidates)
+    return match_channel(target_name, candidates)

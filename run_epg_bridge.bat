@@ -1,39 +1,53 @@
 @echo off
 :: ========================================================
-::   AI EPG BRIDGE - LAUNCHER
+::   AI EPG BRIDGE - LOCAL PC LAUNCHER
+::   Requires VPN to be active for IPTV provider access
 :: ========================================================
 cd /d "%~dp0"
 
-echo [1/3] Checking environment...
+echo ========================================================
+echo   AI EPG BRIDGE - LOCAL PC MODE
+echo ========================================================
+echo.
+
+echo [1/5] Checking environment...
 if not exist ".env" (
-    echo [ERROR] .env file not found! 
+    echo [ERROR] .env file not found!
     echo Please create the .env file with your API keys first.
     pause
     exit /b
 )
 
-:: Optional: Auto-install requirements if they haven't been installed yet
-if not exist "logs\install_check.lock" (
-    echo [2/3] First run detected. Installing dependencies...
-    pip install -r requirements.txt
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to install dependencies. Check your Python installation.
-        pause
-        exit /b
-    )
-    if not exist "logs" mkdir logs
-    echo installed > "logs\install_check.lock"
-) else (
-    echo [2/3] Dependencies already checked.
+if not exist "venv\Scripts\python.exe" (
+    echo [ERROR] Virtual environment not found!
+    echo Run: python -m venv venv
+    pause
+    exit /b
 )
 
-echo [3/3] Starting AI Bridge (Gemini 3.0 Flash)...
+echo [2/5] Activating virtual environment...
+call venv\Scripts\activate.bat
+
+echo [3/5] Starting AI Bridge (Gemini 3.0 Flash)...
 echo.
-:: Run the Python script as a module from the root to ensure imports work
 python src/main.py
+
+if %errorlevel% neq 0 (
+    echo [ERROR] Main script failed!
+    pause
+    exit /b
+)
+
+echo.
+echo [4/5] Deploying EPG (unzip to epg.xml)...
+python src/deploy_epg.py
+
+echo.
+echo [5/5] Pushing to GitHub...
+python src/push_to_github.py
 
 echo.
 echo ========================================================
-echo   Process Complete.
+echo   All done! EPG updated and pushed to GitHub.
 echo ========================================================
 pause

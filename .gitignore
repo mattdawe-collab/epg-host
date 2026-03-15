@@ -11,6 +11,9 @@ logs/full_run_log.txt
 # Cache directories
 **/cache/
 
+# Large uncompressed EPG (use .gz instead)
+epg.xml
+
 # Junk files
 *.zip
 src/New Text Document.txt

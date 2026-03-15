@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import requests
 import gzip
 import re
@@ -11,6 +12,7 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 import ai_client
 import epg_cache
+import console_ui as ui
 
 load_dotenv()
 
@@ -27,6 +29,7 @@ KNOWN_MATCHES_FILE = os.path.join(PROJECT_ROOT, "data", "known_matches.json")
 SUGGESTED_MATCHES_FILE = os.path.join(PROJECT_ROOT, "suggested_matches.json")
 MISSING_LOG = os.path.join(PROJECT_ROOT, "logs", "missing_channels.txt")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "cache")
+PLAYLIST_CACHE = os.path.join(PROJECT_ROOT, "data", "playlist_cache.json")
 
 PRIORITY_PREFIXES = ["US| ", "CA| ", "UK| "]
 OFFLINE_MODE = os.getenv("OFFLINE_MODE", "true").lower() in ("true", "1", "yes")
@@ -35,12 +38,19 @@ OFFLINE_MODE = os.getenv("OFFLINE_MODE", "true").lower() in ("true", "1", "yes")
 SKIP_KNOWN_MISSING = False  # TEMPORARILY DISABLED to give AI a chance
 MAX_AI_CALLS = None  # UNLIMITED - Process all channels with AI
 
+TOTAL_STEPS = 7
+
 # --- SOURCES ---
 REFERENCE_SOURCES = [
     ("https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz", "all_sources.xml.gz"),
     ("https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz", "us_locals.xml.gz"),
+    ("https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz", "us_sports.xml.gz"),
+    # Canada sources
     ("https://epghub.xyz/epg/EPG-CA.xml.gz", "epg_canada.xml.gz"),
-    ("https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz", "us_sports.xml.gz")  # Sports networks
+    ("https://epg.pw/xmltv/epg_CA.xml.gz", "epg_canada_pw.xml.gz"),
+    ("https://raw.githubusercontent.com/globetvapp/epg/main/Canada/canada1.xml.gz", "globetv_canada1.xml.gz"),
+    ("https://raw.githubusercontent.com/globetvapp/epg/main/Canada/canada2.xml.gz", "globetv_canada2.xml.gz"),
+    ("https://raw.githubusercontent.com/globetvapp/epg/main/Canada/canada3.xml.gz", "globetv_canada3.xml.gz"),
 ]
 
 def fetch_playlist():
@@ -49,17 +59,36 @@ def fetch_playlist():
     for attempt in range(3):
         try:
             response = requests.get(url, timeout=60)
-            return response.json()
+            data = response.json()
+            # Cache the playlist so future runs don't need VPN
+            os.makedirs(os.path.dirname(PLAYLIST_CACHE), exist_ok=True)
+            with open(PLAYLIST_CACHE, 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+            return data
         except Exception as e:
             if attempt < 2:
                 wait = 10 * (attempt + 1)
-                print(f"[WARNING] Playlist fetch failed (attempt {attempt + 1}/3): {e}")
-                print(f"          Retrying in {wait}s...")
-                import time
+                ui.warn(f"Playlist fetch failed (attempt {attempt + 1}/3): {e}")
+                ui.info(f"Retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                print(f"[ERROR] Playlist fetch failed after 3 attempts: {e}")
+                ui.error(f"Playlist fetch failed after 3 attempts: {e}")
                 return []
+
+
+def load_cached_playlist():
+    """Load playlist from cache if it exists and is fresh (< 24h)."""
+    if not os.path.exists(PLAYLIST_CACHE):
+        return None
+    age_hours = (time.time() - os.path.getmtime(PLAYLIST_CACHE)) / 3600
+    if age_hours > 24:
+        return None
+    try:
+        with open(PLAYLIST_CACHE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data, age_hours
+    except Exception:
+        return None
 
 def extract_core_name(channel_name):
     """
@@ -67,52 +96,107 @@ def extract_core_name(channel_name):
     Returns a cleaned version for matching.
     """
     original = channel_name
-    
+
     # Step 1: Extract callsign from parentheses (highest priority)
     callsign_match = re.search(r'\(([A-Z]{4,5})\)', channel_name)
     if callsign_match:
         return callsign_match.group(1)
-    
+
     # Step 2: Remove quality markers
     clean = re.sub(r'[ᴴᴰᵁᴴᴰ⁴ᴷˢᵈ¹⁰⁸⁰ᵖᶜᴿᵃᴰ]+', '', channel_name)
     clean = re.sub(r'\b(HD|SD|UHD|4K|FHD|1080p|720p|HEVC|H264|H265)\b', '', clean, flags=re.IGNORECASE)
-    
+
     # Step 3: Remove leading/trailing decorators
     clean = re.sub(r'^[#\|]+\s*', '', clean)
     clean = re.sub(r'\s*[#\|]+$', '', clean)
-    
+
     # Step 4: Split by pipe and extract meaningful parts
     parts = [p.strip() for p in clean.split('|') if p.strip()]
-    
+
     # Step 5: Filter out common metadata
+    # Only skip parts that are EXACTLY these words (not parts of channel names)
+    SKIP_EXACT = {'US', 'CA', 'UK', 'EU', 'PRIME', 'LOCALS', 'CHANNELS'}
     filtered_parts = []
     for p in parts:
-        p_upper = p.upper()
-        # Skip if it's just metadata
-        if any(skip in p_upper for skip in [
-            'PRIME', 'SPORTS', 'NETWORK', 'LOCALS', 'CHANNELS'
-        ]):
-            continue
-        # Skip if it's just a region code
-        if p_upper in ['US', 'CA', 'UK', 'EU']:
+        p_upper = p.strip().upper()
+        if p_upper in SKIP_EXACT:
             continue
         filtered_parts.append(p)
-    
+
     # Step 6: Return the first substantial part
     if filtered_parts:
         result = filtered_parts[0].strip()
         # Remove any remaining pipes or hashes
         result = re.sub(r'[|#]+', ' ', result).strip()
         return result
-    
+
     # Fallback
     return channel_name.strip()
 
+def is_region(xml_id, region):
+    """Check if an XML ID belongs to a region.
+    Handles compound suffixes like .us_locals1, .us2, .ca2, etc."""
+    # Get everything after the last dot
+    suffix = xml_id.rsplit('.', 1)[-1] if '.' in xml_id else ''
+    return suffix.startswith(region)
+
+def find_candidates(channel_name, search_pool, pool_map, max_candidates=40):
+    """
+    Find EPG candidates using multiple strategies, not just fuzzy.
+    Returns dict of {display_name: xml_id}.
+    """
+    candidate_dict = {}
+    core = extract_core_name(channel_name)
+    raw = re.sub(r'^(US|CA|UK)\|\s*', '', channel_name).strip()
+    # Remove HD/SD suffixes for matching
+    raw_clean = re.sub(r'\s*(HD|SD|WEST|EAST)\s*$', '', raw, flags=re.IGNORECASE).strip()
+
+    search_terms = list(dict.fromkeys([core, raw, raw_clean]))  # unique, ordered
+
+    # Strategy 1: Exact case-insensitive substring match
+    for term in search_terms:
+        term_lower = term.lower()
+        if len(term_lower) < 2:
+            continue
+        for epg_name in search_pool:
+            if term_lower in epg_name.lower() or epg_name.lower() in term_lower:
+                candidate_dict[epg_name] = pool_map[epg_name]
+                if len(candidate_dict) >= max_candidates:
+                    break
+        if len(candidate_dict) >= max_candidates:
+            break
+
+    # Strategy 2: Word-level matching (all words in search term appear in EPG name)
+    if len(candidate_dict) < 10:
+        for term in search_terms:
+            words = [w.lower() for w in term.split() if len(w) > 1]
+            if not words:
+                continue
+            for epg_name in search_pool:
+                epg_lower = epg_name.lower()
+                if all(w in epg_lower for w in words):
+                    if epg_name not in candidate_dict:
+                        candidate_dict[epg_name] = pool_map[epg_name]
+                        if len(candidate_dict) >= max_candidates:
+                            break
+
+    # Strategy 3: Fuzzy as fallback (fills remaining slots)
+    remaining = max_candidates - len(candidate_dict)
+    if remaining > 0:
+        for term in search_terms:
+            fuzzy_results = process.extract(term, search_pool, limit=remaining)
+            for match, score in fuzzy_results:
+                if match not in candidate_dict:
+                    candidate_dict[match] = pool_map[match]
+
+    return candidate_dict
+
+
 def build_regional_maps(reference_map):
     """Pre-compute regional subsets once instead of filtering per channel."""
-    us_map = {name: xml_id for name, xml_id in reference_map.items() if xml_id.endswith('.us')}
-    ca_map = {name: xml_id for name, xml_id in reference_map.items() if xml_id.endswith('.ca')}
-    uk_map = {name: xml_id for name, xml_id in reference_map.items() if xml_id.endswith('.uk')}
+    us_map = {name: xml_id for name, xml_id in reference_map.items() if is_region(xml_id, 'us')}
+    ca_map = {name: xml_id for name, xml_id in reference_map.items() if is_region(xml_id, 'ca')}
+    uk_map = {name: xml_id for name, xml_id in reference_map.items() if is_region(xml_id, 'uk')}
     return {"US": us_map, "CA": ca_map, "UK": uk_map}
 
 def get_regional_map(channel_name, regional_maps, reference_map):
@@ -133,76 +217,119 @@ def is_priority_channel(name):
     return False
 
 def main():
-    # 1. Load Databases
+    start_time = time.time()
+
+    mode_label = "OFFLINE" if OFFLINE_MODE else "LOCAL PC"
+    ui.banner(f"AI EPG BRIDGE v2.0 - {mode_label}")
+
+    # ── Step 1: Load Databases ──────────────────────────────
+    ui.step(1, TOTAL_STEPS, "Loading databases...")
+
     known_matches = {}
     if os.path.exists(KNOWN_MATCHES_FILE):
         with open(KNOWN_MATCHES_FILE, 'r', encoding='utf-8') as f:
             known_matches = json.load(f)
-        print(f"[*] Loaded {len(known_matches)} known matches from database")
+        ui.success(f"Loaded {len(known_matches):,} known matches")
 
-    # Ingest AI Suggestions
     if os.path.exists(SUGGESTED_MATCHES_FILE):
         try:
             with open(SUGGESTED_MATCHES_FILE, 'r', encoding='utf-8') as f:
                 suggestions = json.load(f)
                 if suggestions:
                     known_matches.update(suggestions)
-                    print(f"[*] Added {len(suggestions)} AI suggestions")
+                    ui.success(f"Added {len(suggestions):,} AI suggestions")
         except (json.JSONDecodeError, IOError) as e:
-            print(f"[WARNING] Could not load suggested_matches.json: {e}")
+            ui.warn(f"Could not load suggested_matches.json: {e}")
+
+    # ── Step 2: Fetch Channel List ──────────────────────────
+    ui.step(2, TOTAL_STEPS, "Fetching channel list...")
 
     if OFFLINE_MODE:
-        print(f"\n[*] OFFLINE MODE: Using known matches as channel source (no IPTV fetch)")
-        # Use known_matches keys as the channel list
         all_channel_names = [name for name in known_matches.keys() if not name.startswith("#")]
+        ui.info(f"Offline mode: using {len(all_channel_names):,} channels from database")
     else:
-        playlist = fetch_playlist()
-        if not playlist:
-            print("[ERROR] Failed to fetch playlist!")
-            sys.exit(1)
-        print(f"[*] Fetched {len(playlist)} total channels from IPTV provider")
-        all_channel_names = [ch.get('name', '').strip() for ch in playlist]
+        cached = load_cached_playlist()
+        fetch_new = True
+
+        if cached:
+            playlist, cache_age = cached
+            ui.info(f"Cached playlist found ({len(playlist):,} channels, {cache_age:.1f}h old)")
+            # Read directly from console (input() breaks when launched via .bat)
+            sys.stdout.write(f"    {ui.CYAN}?{ui.RESET} Fetch fresh playlist from IPTV? (requires VPN) [y/N]: ")
+            sys.stdout.flush()
+            try:
+                con = open('CON', 'r')
+                answer = con.readline().strip().lower()
+                con.close()
+            except Exception:
+                answer = input().strip().lower()
+            if answer not in ('y', 'yes'):
+                fetch_new = False
+                all_channel_names = [ch.get('name', '').strip() for ch in playlist]
+                ui.success(f"Using cached playlist - no VPN needed")
+
+        if fetch_new:
+            sys.stdout.write(f"    {ui.CYAN}?{ui.RESET} Fetch playlist from IPTV provider? (requires VPN) [Y/n/skip]: ")
+            sys.stdout.flush()
+            try:
+                con = open('CON', 'r')
+                answer2 = con.readline().strip().lower()
+                con.close()
+            except Exception:
+                answer2 = input().strip().lower()
+
+            if answer2 in ('s', 'skip'):
+                # Fall back to known matches as channel source
+                all_channel_names = [name for name in known_matches.keys() if not name.startswith("#")]
+                ui.info(f"Skipped IPTV fetch - using {len(all_channel_names):,} channels from database")
+            elif answer2 in ('n', 'no'):
+                ui.error("No playlist available. Exiting.")
+                sys.exit(0)
+            else:
+                ui.info("Fetching from IPTV provider (VPN required)...")
+                playlist = fetch_playlist()
+                if not playlist:
+                    ui.error("Failed to fetch playlist! Is your VPN connected?")
+                    sys.exit(1)
+                all_channel_names = [ch.get('name', '').strip() for ch in playlist]
+                ui.success(f"Fetched {len(playlist):,} channels (cached for next run)")
 
     known_missing = set()
     if SKIP_KNOWN_MISSING and os.path.exists(MISSING_LOG):
         with open(MISSING_LOG, 'r', encoding='utf-8') as f:
             known_missing = {line.strip() for line in f if line.strip()}
-        print(f"[*] Loaded {len(known_missing)} known missing channels (will skip)")
-    else:
-        print(f"[*] Processing all channels with AI - no skip list")
 
-    # Smart cache: only re-download if cache is stale
+    # ── Step 3: Load Reference EPG Data ─────────────────────
+    ui.step(3, TOTAL_STEPS, "Loading reference EPG data...")
+
     cache_max_age = float(os.getenv("CACHE_MAX_AGE", "24"))
-    print(f"\n[*] Loading reference EPG data (cache max age: {cache_max_age}h)...")
     reference_data, valid_ids = epg_cache.fetch_reference_data_smart(
         REFERENCE_SOURCES, CACHE_DIR, cache_max_age_hours=cache_max_age
     )
     id_to_name = {xml_id: names[0] for xml_id, names in epg_cache.build_reverse_lookup(reference_data).items() if names}
     ref_names = list(reference_data.keys())
 
-    # Count by region
-    ca_count = sum(1 for xml_id in valid_ids if xml_id.endswith('.ca'))
-    us_count = sum(1 for xml_id in valid_ids if xml_id.endswith('.us'))
-    print(f"[*] Breakdown: {us_count} US channels, {ca_count} CA channels")
+    ca_count = sum(1 for xml_id in valid_ids if is_region(xml_id, 'ca'))
+    us_count = sum(1 for xml_id in valid_ids if is_region(xml_id, 'us'))
+    uk_count = sum(1 for xml_id in valid_ids if is_region(xml_id, 'uk'))
+    ui.success(f"{len(reference_data):,} display names | {len(valid_ids):,} channel IDs")
+    ui.info(f"US: {us_count:,} | CA: {ca_count:,} | UK: {uk_count:,}")
 
-    # Pre-compute regional maps once (instead of filtering per channel)
     regional_maps = build_regional_maps(reference_data)
-    print(f"[*] Regional maps: US={len(regional_maps['US'])}, CA={len(regional_maps['CA'])}, UK={len(regional_maps['UK'])}")
-
     target_names = [name for name in all_channel_names if is_priority_channel(name)]
+    ui.info(f"{len(target_names):,} priority channels to process (US|CA|UK)")
 
-    print(f"\n[*] Processing {len(target_names)} priority channels (US|CA|UK)...")
+    # ── Step 4: Quick Matching ──────────────────────────────
+    ui.step(4, TOTAL_STEPS, "Phase 1 - Quick matching...")
 
     final_matches = {}
     new_missing = []
     ai_queue = []
     stats = {"known": 0, "exact": 0, "ai": 0, "skipped": 0, "stale": 0}
 
-    print("\n[PHASE 1] Quick wins (known matches + exact matches)...")
-    pbar = tqdm(target_names, unit="ch")
+    pbar = tqdm(target_names, unit="ch", bar_format="    {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
 
     for name in pbar:
-        # Check known database
         if name in known_matches:
             target_id = known_matches[name]
             if target_id in valid_ids:
@@ -213,23 +340,19 @@ def main():
                 stats["stale"] += 1
                 del known_matches[name]
 
-        # Skip known missing (only if enabled)
         if SKIP_KNOWN_MISSING and name in known_missing:
             new_missing.append(name)
             stats["skipped"] += 1
             continue
 
-        # Extract core name for matching
         core_name = extract_core_name(name)
 
-        # Try direct lookup on extracted name
         if core_name in reference_data:
             final_matches[name] = reference_data[core_name]
             known_matches[name] = reference_data[core_name]
             stats["exact"] += 1
             continue
 
-        # Try very high fuzzy threshold (98%+) for obvious matches
         filtered_map = get_regional_map(name, regional_maps, reference_data)
         filtered_names = list(filtered_map.keys())
 
@@ -243,61 +366,73 @@ def main():
             stats["exact"] += 1
             continue
 
-        # Queue for AI (only in online mode - offline mode skips AI)
         if not OFFLINE_MODE:
             ai_queue.append(name)
         else:
             new_missing.append(name)
 
-    if not OFFLINE_MODE:
-        print(f"\n[PHASE 2] AI matching for {len(ai_queue)} channels...")
-        print(f"[*] Processing ALL channels with Gemini 3 Flash (no limit)...")
+    ui.success(f"{stats['known']:,} known | {stats['exact']:,} exact | {len(ai_queue):,} queued for AI")
 
-        if ai_queue:
-            ai_limit = MAX_AI_CALLS if MAX_AI_CALLS else len(ai_queue)
-            ai_subset = ai_queue[:ai_limit]
+    # ── Step 5: AI Matching ─────────────────────────────────
+    ui.step(5, TOTAL_STEPS, "Phase 2 - AI matching...")
 
-            ai_pbar = tqdm(ai_subset, unit="ch", desc="AI Matching")
+    if OFFLINE_MODE:
+        ui.info("Skipped (offline mode)")
+    elif not ai_queue:
+        ui.success("No channels need AI matching!")
+    else:
+        ai_limit = MAX_AI_CALLS if MAX_AI_CALLS else len(ai_queue)
+        ai_subset = ai_queue[:ai_limit]
+        batch_size = ai_client.BATCH_SIZE
 
-            for name in ai_pbar:
-                try:
-                    core_name = extract_core_name(name)
+        # Build candidate lists for all channels first
+        ui.info(f"Building candidate lists for {len(ai_subset):,} channels...")
+        channel_data = []
+        for name in ai_subset:
+            filtered_map = get_regional_map(name, regional_maps, reference_data)
+            filtered_names = list(filtered_map.keys())
+            search_pool = filtered_names if filtered_names else ref_names
+            pool_map = filtered_map if filtered_names else reference_data
+            candidate_dict = find_candidates(name, search_pool, pool_map)
+            channel_data.append((name, candidate_dict))
 
-                    # Get regional candidates (pre-computed, instant lookup)
-                    filtered_map = get_regional_map(name, regional_maps, reference_data)
-                    filtered_names = list(filtered_map.keys())
+        # Process in batches
+        total_batches = (len(channel_data) + batch_size - 1) // batch_size
+        ui.info(f"Processing {len(channel_data):,} channels in {total_batches} batches of {batch_size}...")
 
-                    search_pool = filtered_names if filtered_names else ref_names
+        batch_pbar = tqdm(range(0, len(channel_data), batch_size),
+                         unit="batch",
+                         bar_format="    {l_bar}{bar}| batch {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
 
-                    # Get top 15 fuzzy candidates (AI will pick from these)
-                    candidates = process.extract(core_name, search_pool, limit=15)
+        for batch_start in batch_pbar:
+            batch = channel_data[batch_start:batch_start + batch_size]
 
-                    # Build candidate dict
-                    candidate_dict = {match: (filtered_map if filtered_names else reference_data)[match]
-                                     for match, score in candidates}
+            try:
+                results = ai_client.match_batch(batch)
 
-                    # Ask AI
-                    result = ai_client.match_channel(name, candidate_dict)
-
-                    if result and result in valid_ids:
-                        final_matches[name] = result
-                        known_matches[name] = result
+                for name, selected_id in results.items():
+                    if selected_id and selected_id in valid_ids:
+                        final_matches[name] = selected_id
+                        known_matches[name] = selected_id
                         stats["ai"] += 1
                     else:
                         new_missing.append(name)
 
-                except Exception as e:
-                    ai_pbar.write(f"[AI ERROR] {name}: {e}")
+                # Save progress after each batch
+                with open(KNOWN_MATCHES_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(known_matches, f, indent=4)
+
+            except Exception as e:
+                print(f"    {ui.RED}✗{ui.RESET} Batch error: {e}")
+                for name, _ in batch:
                     new_missing.append(name)
 
-            # Add remaining to missing if limit was reached
-            if MAX_AI_CALLS and len(ai_queue) > MAX_AI_CALLS:
-                print(f"\n[INFO] Processed {MAX_AI_CALLS} channels. {len(ai_queue) - MAX_AI_CALLS} remaining added to missing.")
-                new_missing.extend(ai_queue[MAX_AI_CALLS:])
-    else:
-        print(f"\n[PHASE 2] Skipped (offline mode - no AI matching)")
+        if MAX_AI_CALLS and len(ai_queue) > MAX_AI_CALLS:
+            new_missing.extend(ai_queue[MAX_AI_CALLS:])
 
-    # Save results
+        ui.success(f"{stats['ai']:,} matched by AI")
+
+    # ── Save Results ────────────────────────────────────────
     if not os.path.exists(os.path.dirname(KNOWN_MATCHES_FILE)):
         os.makedirs(os.path.dirname(KNOWN_MATCHES_FILE))
 
@@ -312,27 +447,25 @@ def main():
         m for m in new_missing
         if is_priority_channel(m) and not m.startswith("#")
     ])))
-    
+
     log_dir = os.path.dirname(MISSING_LOG)
     if log_dir and not os.path.exists(log_dir):
         os.makedirs(log_dir)
-        
+
     with open(MISSING_LOG, 'w', encoding='utf-8') as f:
         f.write("\n".join(clean_missing))
 
-    # Generate EPG
-    print(f"\n[*] Generating Super EPG with program data...")
-    
+    # ── Step 6: Generate EPG XML ────────────────────────────
+    ui.step(6, TOTAL_STEPS, "Generating EPG XML...")
+
     base_name = os.path.splitext(OUTPUT_BASE)[0]
     OUTPUT_GZ = base_name + ".xml.gz"
-    
+
     if not os.path.exists(os.path.dirname(OUTPUT_GZ)):
         os.makedirs(os.path.dirname(OUTPUT_GZ))
-    
+
     valid_xml_ids = set(final_matches.values())
 
-    # Build reverse map: xml_id -> list of M3U channel names
-    # (multiple M3U channels can share the same EPG source)
     xml_id_to_names = {}
     for ch_name, xml_id in final_matches.items():
         xml_id_to_names.setdefault(xml_id, []).append(ch_name)
@@ -340,7 +473,6 @@ def main():
     with gzip.open(OUTPUT_GZ, 'wb') as f:
         with etree.xmlfile(f, encoding='utf-8') as xf:
             with xf.element('tv'):
-                # Use M3U channel name as the channel ID so TiviMate can match
                 for ch_name, xml_id in final_matches.items():
                     ch_elem = etree.Element('channel', id=ch_name)
                     dn = etree.SubElement(ch_elem, 'display-name')
@@ -350,13 +482,12 @@ def main():
                 for url, filename in REFERENCE_SOURCES:
                     path = os.path.join(CACHE_DIR, filename)
                     try:
-                        print(f"    - Merging schedule from {filename}...")
+                        ui.info(f"Merging {filename}...")
                         with gzip.open(path, 'rb') as source_f:
                             context = etree.iterparse(source_f, events=('end',), tag='programme')
                             for event, elem in context:
                                 orig_id = elem.get('channel')
                                 if orig_id in valid_xml_ids:
-                                    # Write a copy for each M3U channel that uses this EPG source
                                     for ch_name in xml_id_to_names.get(orig_id, []):
                                         prog_copy = deepcopy(elem)
                                         prog_copy.set('channel', ch_name)
@@ -365,18 +496,44 @@ def main():
                                 while elem.getprevious() is not None:
                                     del elem.getparent()[0]
                     except Exception as e:
-                        print(f"Error merging {filename}: {e}")
+                        ui.error(f"Error merging {filename}: {e}")
 
-    print(f"\n[!] Done! Super EPG saved to {OUTPUT_GZ}")
-    print(f"\n=== FINAL STATS ===")
-    print(f"Known from DB: {stats['known']}")
-    print(f"Exact matches: {stats['exact']}")
-    print(f"AI-matched: {stats['ai']}")
-    print(f"Skipped (known missing): {stats['skipped']}")
-    print(f"Stale (removed): {stats['stale']}")
-    print(f"Total matched: {len(final_matches)}")
-    print(f"Missing: {len(clean_missing)} channels")
-    print(f"\nSuccess rate: {(len(final_matches) / len(target_names) * 100):.1f}%")
+    ui.success(f"EPG saved to {OUTPUT_GZ}")
+
+    # ── Step 7: Deploy & Push ───────────────────────────────
+    ui.step(7, TOTAL_STEPS, "Deploy & push to GitHub...")
+
+    import deploy_epg
+    import push_to_github
+
+    deploy_ok = deploy_epg.run()
+    if deploy_ok:
+        ui.success("Deployed epg.xml")
+    else:
+        ui.error("Deploy failed")
+
+    git_ok = push_to_github.push_to_github()
+    if git_ok:
+        ui.success("Pushed to GitHub")
+    else:
+        ui.error("Git push failed")
+
+    # ── Dashboard ───────────────────────────────────────────
+    elapsed = time.time() - start_time
+
+    ui.dashboard({
+        "total": len(target_names),
+        "known": stats["known"],
+        "exact": stats["exact"],
+        "ai": stats["ai"],
+        "missing": len(clean_missing),
+        "stale": stats["stale"],
+        "skipped": stats["skipped"],
+        "elapsed_seconds": elapsed,
+        "output_file": OUTPUT_GZ,
+        "deploy_ok": deploy_ok,
+        "git_ok": git_ok,
+    })
 
 if __name__ == "__main__":
     main()

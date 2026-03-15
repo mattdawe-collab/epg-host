@@ -243,17 +243,20 @@ def validate_epg_coverage(valid_ids: Set[str]) -> Dict[str, int]:
         'ca_specialty': 0,
     }
     
+    def _is_region(xid, region):
+        suffix = xid.rsplit('.', 1)[-1] if '.' in xid else ''
+        return suffix.startswith(region)
+
     for xmlid in valid_ids:
-        if xmlid.endswith('.us'):
+        if _is_region(xmlid, 'us'):
             stats['us_total'] += 1
-            # Check if it looks like a local station (has parentheses with callsign)
             if '(' in xmlid and ')' in xmlid:
                 stats['us_locals'] += 1
             else:
                 stats['us_cable'] += 1
-        elif xmlid.endswith('.ca'):
+        elif _is_region(xmlid, 'ca'):
             stats['ca_total'] += 1
-        elif xmlid.endswith('.uk'):
+        elif _is_region(xmlid, 'uk'):
             stats['uk_total'] += 1
     
     return stats

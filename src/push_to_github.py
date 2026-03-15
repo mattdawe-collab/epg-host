@@ -2,6 +2,7 @@ import subprocess
 import sys
 from datetime import datetime
 
+
 def run_command(cmd):
     """Execute shell command and return result"""
     try:
@@ -10,35 +11,39 @@ def run_command(cmd):
     except Exception as e:
         return False, "", str(e)
 
-def push_to_github():
-    """Add, commit, and push changes to GitHub"""
-    print("[GIT] Adding files...")
+
+def push_to_github(verbose=False):
+    """Add, commit, and push changes to GitHub. Returns True on success."""
     success, _, error = run_command("git add .")
     if not success:
-        print(f"[ERROR] Git add failed: {error}")
+        if verbose:
+            print(f"    Git add failed: {error}")
         return False
-    
-    # Create commit message with timestamp
+
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     commit_msg = f"Auto-Update EPG: {timestamp}"
-    
-    print(f"[GIT] Committing: {commit_msg}")
+
     success, _, error = run_command(f'git commit -m "{commit_msg}"')
     if not success:
         if "nothing to commit" in error:
-            print("[INFO] No changes to commit")
             return True
-        print(f"[ERROR] Git commit failed: {error}")
+        if verbose:
+            print(f"    Git commit failed: {error}")
         return False
-    
-    print("[GIT] Pushing to origin/main...")
+
     success, _, error = run_command("git push origin main")
     if not success:
-        print(f"[ERROR] Git push failed: {error}")
+        if verbose:
+            print(f"    Git push failed: {error}")
         return False
-    
-    print("[SUCCESS] Changes pushed to GitHub!")
+
     return True
 
+
 if __name__ == "__main__":
-    push_to_github()
+    import console_ui as ui
+    ui.banner("PUSH TO GITHUB")
+    if push_to_github(verbose=True):
+        ui.success("Changes pushed to GitHub!")
+    else:
+        ui.error("Push failed")
