@@ -23,12 +23,12 @@ def push_to_github(verbose=False):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     commit_msg = f"Auto-Update EPG: {timestamp}"
 
-    success, _, error = run_command(f'git commit -m "{commit_msg}"')
+    success, output, error = run_command(f'git commit -m "{commit_msg}"')
     if not success:
-        if "nothing to commit" in error:
+        if "nothing to commit" in output or "nothing to commit" in error:
             return True
         if verbose:
-            print(f"    Git commit failed: {error}")
+            print(f"    Git commit failed: {output}{error}")
         return False
 
     success, _, error = run_command("git push origin main")
