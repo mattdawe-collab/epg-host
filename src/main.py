@@ -81,7 +81,7 @@ def load_cached_playlist():
     if not os.path.exists(PLAYLIST_CACHE):
         return None
     age_hours = (time.time() - os.path.getmtime(PLAYLIST_CACHE)) / 3600
-    if age_hours > 24:
+    if age_hours > 2160:  # 90 days
         return None
     try:
         with open(PLAYLIST_CACHE, 'r', encoding='utf-8') as f:
