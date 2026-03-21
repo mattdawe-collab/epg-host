@@ -31,7 +31,13 @@ MISSING_LOG = os.path.join(PROJECT_ROOT, "logs", "missing_channels.txt")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "cache")
 PLAYLIST_CACHE = os.path.join(PROJECT_ROOT, "data", "playlist_cache.json")
 
-PRIORITY_PREFIXES = ["US| ", "CA| ", "UK| "]
+PRIORITY_PREFIXES = [
+    "US| ", "CA| ", "UK| ",
+    "PRIME| ", "SLING| ", "GO| ", "PLAY+| ",
+    "UK-BBCI| ", "UK-NOWTV| ",
+    "SPORTS| ", "NFL TEAMS| ", "NHL TEAM| ",
+    "4K| ", "ENGLISH| ", "EN| ",
+]
 OFFLINE_MODE = os.getenv("OFFLINE_MODE", "true").lower() in ("true", "1", "yes")
 
 # --- CONFIG ---
@@ -45,6 +51,9 @@ REFERENCE_SOURCES = [
     ("https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz", "all_sources.xml.gz"),
     ("https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz", "us_locals.xml.gz"),
     ("https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz", "us_sports.xml.gz"),
+    # UK sources
+    ("https://epg.pw/xmltv/epg_GB.xml.gz", "epg_uk_pw.xml.gz"),
+    ("https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz", "epg_uk_ripper.xml.gz"),
     # Canada sources
     ("https://epghub.xyz/epg/EPG-CA.xml.gz", "epg_canada.xml.gz"),
     ("https://epg.pw/xmltv/epg_CA.xml.gz", "epg_canada_pw.xml.gz"),
@@ -203,10 +212,11 @@ def get_regional_map(channel_name, regional_maps, reference_map):
     """Get the appropriate regional map for a channel name."""
     if channel_name.startswith("CA| "):
         return regional_maps["CA"] or reference_map
-    if channel_name.startswith("US| "):
+    if channel_name.startswith("US| ") or channel_name.startswith("SLING| "):
         return regional_maps["US"] or reference_map
-    if channel_name.startswith("UK| "):
+    if channel_name.startswith(("UK| ", "UK-BBCI| ", "UK-NOWTV| ")):
         return regional_maps["UK"] or reference_map
+    # PRIME|, GO|, PLAY+|, SPORTS|, 4K|, etc. -> search all regions
     return reference_map
 
 def is_priority_channel(name):
@@ -317,7 +327,7 @@ def main():
 
     regional_maps = build_regional_maps(reference_data)
     target_names = [name for name in all_channel_names if is_priority_channel(name)]
-    ui.info(f"{len(target_names):,} priority channels to process (US|CA|UK)")
+    ui.info(f"{len(target_names):,} priority channels to process")
 
     # ── Step 4: Quick Matching ──────────────────────────────
     ui.step(4, TOTAL_STEPS, "Phase 1 - Quick matching...")
