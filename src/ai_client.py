@@ -112,22 +112,11 @@ CHANNELS TO MATCH:
 
 RESPOND WITH A JSON ARRAY, one result per channel in order:
 [
-  {{
-    "index": 0,
-    "match_found": true,
-    "selected_id": "ExactID.domain",
-    "confidence": "high|medium|low",
-    "reasoning": "Brief explanation (1 sentence max)"
-  }},
-  {{
-    "index": 1,
-    "match_found": false,
-    "selected_id": null,
-    "reasoning": "Why no match (1 sentence max)"
-  }}
+  {{"index": 0, "match_found": true, "selected_id": "ExactID.domain"}},
+  {{"index": 1, "match_found": false, "selected_id": null}}
 ]
 
-Keep reasoning BRIEF - one sentence max per channel. Return ONLY the JSON array."""
+Return ONLY the JSON array."""
 
     # Retry with exponential backoff
     max_retries = 3
@@ -164,18 +153,13 @@ Keep reasoning BRIEF - one sentence max per channel. Return ONLY the JSON array.
                     valid_ids = all_candidates.get(name, set())
 
                     if selected in valid_ids:
-                        confidence = result.get("confidence", "unknown")
-                        reasoning = result.get("reasoning", "")
-                        print(f"  [OK] {name[:40]:<40} → {selected} [{confidence}]")
-                        if reasoning:
-                            print(f"        {reasoning[:100]}")
+                        print(f"  [OK] {name[:40]:<40} → {selected}")
                         output[name] = selected
                     else:
                         print(f"  [FAIL] {name[:40]:<40} → Invalid ID: {selected}")
                         output[name] = None
                 else:
-                    reasoning = result.get("reasoning", "No match")
-                    print(f"  [SKIP] {name[:40]:<40} → {reasoning[:80]}")
+                    print(f"  [SKIP] {name[:40]:<40} → no match")
                     output[name] = None
 
             # Fill in any channels the AI missed in its response

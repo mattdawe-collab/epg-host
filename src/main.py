@@ -369,7 +369,7 @@ def main():
         search_pool = filtered_names if filtered_names else ref_names
         matches = process.extract(core_name, search_pool, limit=1)
 
-        if matches and matches[0][1] >= 98:
+        if matches and matches[0][1] >= 93:
             best_id = (filtered_map if filtered_names else reference_data)[matches[0][0]]
             final_matches[name] = best_id
             known_matches[name] = best_id
@@ -403,7 +403,7 @@ def main():
             filtered_names = list(filtered_map.keys())
             search_pool = filtered_names if filtered_names else ref_names
             pool_map = filtered_map if filtered_names else reference_data
-            candidate_dict = find_candidates(name, search_pool, pool_map)
+            candidate_dict = find_candidates(name, search_pool, pool_map, max_candidates=20)
             channel_data.append((name, candidate_dict))
 
         # Process in batches
