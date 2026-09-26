@@ -1,6 +1,4 @@
-google-genai
 requests
 python-dotenv
-fuzzywuzzy
-python-Levenshtein
 lxml
+rapidfuzz>=3
