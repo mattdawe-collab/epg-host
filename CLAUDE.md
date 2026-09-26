@@ -6,6 +6,7 @@ This project builds the TV guide (XMLTV) that TiviMate uses for the user's IPTV 
 - `.github/workflows/nightly.yml` runs `src/main.py` on GitHub every night at 09:00 UTC. It runs from the `code` branch, which is the default, and force-pushes the result to the publish-only `main` branch.
 - TiviMate reads `main/epg.xml.gz` through tinyurl.com/bdzutmzd. The same file is also at `main/data/epg_repair.xml.gz` for tinyurl.com/5xkmff7s. Those paths must keep working.
 - Guide channel IDs are the provider's exact channel names, which is how TiviMate matches them. Never rename or "clean up" names in `data/known_matches.json`.
+- The provider's names look like `US: CNN HD`; the tag before `: ` is the group. Until 2026 they looked like `US| CNN HD`, and the saved matches under old names carry over automatically (see `TAG_ALIASES` in `src/matching.py`).
 - Tonight's results are on `main`:
   - `status.json`: counts and the scorecard
   - `matches.json`: every match and how it was made

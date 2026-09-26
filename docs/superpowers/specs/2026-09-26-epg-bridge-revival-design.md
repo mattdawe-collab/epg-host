@@ -100,6 +100,15 @@ It runs on `ubuntu-latest` with Python 3.13 at 09:00 UTC, which is 3 AM MDT or 2
 - The code never prints the API URL, and network errors are logged with the query string stripped. GitHub also masks secret values in logs.
 - Nothing containing the provider's address is committed. The raw playlist cache stops being committed.
 
+## Provider renamed its channels (found 2026-09-26)
+
+Some time after March, the provider switched from `US| CNN HD` to `US: CNN HD` and regrouped its channels. None of the 7,378 saved names still exist.
+
+- **The main groups now:** `US`, `UK`, `NOW`, `CA`, `CA EN`, `CA FR`, `PRIME`, `PLAY+`, `AT&T`, `TV`, `4K`, `ENGLISH`, `SPORTS`. That's 8,886 channels. The old `|` prefixes stay recognised so saved matches can be carried over.
+- **Old groups mapped to new ones** (found by comparing channel names): SLING→AT&T, GO→TV, UK-NOWTV→NOW, UK-BBCI→UK, NHL TEAM→US, CA→CA / CA EN / CA FR. The rest kept their names.
+- **Rename carry-over, changed:** a new name inherits a saved match when it equals a vanished saved name once quality tags, punctuation and the group mapping above are ignored, and when all of those vanished names agree on one guide ID. *Every* quality copy of a channel ("US: CNN HD", "US: CNN 4K") inherits the match; they're the same channel.
+- **First build under the new names:** 3,420 carried, 394 automatic, 5,072 queued. Coverage 42.9%, fresh 91.6%. The old matches carry over nightly, and each session's `apply` saves them under the new names.
+
 ## Scorecard (requested 2026-09-26)
 
 Every nightly run scores the guide. The scores go in `status.json`, the run summary and `score_history.json` on `main`. The history is carried forward from last night's copy, keeping 365 days.

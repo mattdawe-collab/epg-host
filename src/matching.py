@@ -6,14 +6,25 @@ from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz, process, utils
 
-PRIORITY_PREFIXES = (
+OLD_PREFIXES = (  # the provider's naming until 2026: "US| CNN HD"
     "US| ", "CA| ", "UK| ",
     "PRIME| ", "SLING| ", "GO| ", "PLAY+| ",
     "UK-BBCI| ", "UK-NOWTV| ",
     "SPORTS| ", "NFL TEAMS| ", "NHL TEAM| ",
     "4K| ", "ENGLISH| ", "EN| ",
 )
-PREFIX_WORDS = {p.strip("| ").upper() for p in PRIORITY_PREFIXES} | {"EU", "LOCALS", "CHANNELS"}
+NEW_TAGS = ("US", "UK", "NOW", "CA", "CA EN", "CA FR", "PRIME", "PLAY+", "AT&T", "TV", "4K", "ENGLISH", "SPORTS")
+PRIORITY_PREFIXES = OLD_PREFIXES + tuple(f"{t}: " for t in NEW_TAGS)  # current naming: "US: CNN HD"
+# Where each old group went when the provider regrouped its channels (found by name overlap, 2026-09-26).
+TAG_ALIASES = {"SLING": ("AT&T",), "GO": ("TV",), "UK-NOWTV": ("NOW",), "UK-BBCI": ("UK",), "NHL TEAM": ("US",),
+               "CA": ("CA", "CA EN", "CA FR")}
+REGION_PREFIXES = {
+    "CA": ("CA| ", "CA: ", "CA EN: ", "CA FR: "),
+    "US": ("US| ", "SLING| ", "US: ", "AT&T: ", "TV: "),
+    "UK": ("UK| ", "UK-BBCI| ", "UK-NOWTV| ", "UK: ", "NOW: "),
+}
+_PREFIXES_LONGEST_FIRST = sorted(PRIORITY_PREFIXES, key=len, reverse=True)
+PREFIX_WORDS = {p[:-2].strip().upper() for p in PRIORITY_PREFIXES} | {"EU", "LOCALS", "CHANNELS"}
 AUTO_MATCH_SCORE = 93
 SUPERSCRIPT_TAGS = re.compile(r"[ᴴᴰᵁᴴᴰ⁴ᴷˢᵈ¹⁰⁸⁰ᵖᶜᴿᵃᴰ]+")
 QUALITY_WORDS = re.compile(r"\b(HD|SD|UHD|FHD|4K|HEVC|H264|H265|1080P|720P|60FPS)\b", re.IGNORECASE)
@@ -23,12 +34,20 @@ def is_priority_channel(name):
     return name.startswith(PRIORITY_PREFIXES)
 
 
+def split_tag(name):
+    """('US', 'CNN HD') for 'US: CNN HD' or 'US| CNN HD'; ('', name) when there is no known group tag."""
+    for prefix in _PREFIXES_LONGEST_FIRST:
+        if name.startswith(prefix):
+            return prefix[:-2].strip(), name[len(prefix):]
+    return "", name
+
+
 def extract_core_name(channel_name):
     """The part of a decorated IPTV name that identifies the channel: a callsign if present."""
     callsign = re.search(r"\(([A-Z]{4,5})\)", channel_name)
     if callsign:
         return callsign.group(1)
-    clean = SUPERSCRIPT_TAGS.sub("", channel_name)
+    clean = SUPERSCRIPT_TAGS.sub("", split_tag(channel_name)[1])
     clean = QUALITY_WORDS.sub("", clean)
     clean = re.sub(r"^[#|]+\s*", "", clean)
     clean = re.sub(r"\s*[#|]+$", "", clean)
@@ -40,9 +59,11 @@ def extract_core_name(channel_name):
 
 def normalize_name(name):
     """Prefix plus name with quality tags and punctuation removed: 'US| CNN HD' -> 'US|CNN'."""
-    prefix, sep, rest = name.partition("| ")
-    if not sep:
-        prefix, rest = "", name
+    prefix, rest = split_tag(name)
+    if not prefix:
+        prefix, sep, rest = name.partition("| ")
+        if not sep:
+            prefix, rest = "", name
     rest = QUALITY_WORDS.sub(" ", SUPERSCRIPT_TAGS.sub(" ", rest))
     rest = " ".join(re.sub(r"[^0-9A-Za-z]+", " ", rest).upper().split())
     return f"{prefix.strip().upper()}|{rest}"
@@ -54,12 +75,9 @@ def is_region(xml_id, region):
 
 
 def region_of(channel_name):
-    if channel_name.startswith("CA| "):
-        return "CA"
-    if channel_name.startswith(("US| ", "SLING| ")):
-        return "US"
-    if channel_name.startswith(("UK| ", "UK-BBCI| ", "UK-NOWTV| ")):
-        return "UK"
+    for region, prefixes in REGION_PREFIXES.items():
+        if channel_name.startswith(prefixes):
+            return region
     return "ALL"
 
 
@@ -85,7 +103,8 @@ class Pools:
     def candidates(self, region, channel_name, limit=10):
         names, lower, pool = self._names[region], self._lower[region], self.maps[region]
         core = extract_core_name(channel_name)
-        raw = re.sub(r"^[^|]*\|\s*", "", channel_name).strip()
+        tag, rest = split_tag(channel_name)
+        raw = rest.strip() if tag else re.sub(r"^[^|]*\|\s*", "", channel_name).strip()
         raw_clean = re.sub(r"\s*(HD|SD|WEST|EAST)\s*$", "", raw, flags=re.IGNORECASE).strip()
         terms = [t for t in dict.fromkeys([core, raw, raw_clean]) if len(t) >= 2]
         found = {}
@@ -114,20 +133,27 @@ class Pools:
 
 
 def carry_over_renames(current_names, known):
-    """New names that differ from exactly one vanished matched name only by quality tags or punctuation."""
+    """New names that differ from vanished saved names only by quality tags, punctuation or a regrouping
+    (see TAG_ALIASES). Every quality copy of a channel inherits the match, as long as the vanished
+    names agree on a single guide ID."""
     current = set(current_names)
-    vanished, new = defaultdict(list), defaultdict(list)
+    vanished = defaultdict(list)
     for old in known:
-        if old not in current and not old.startswith("#") and is_priority_channel(old):
-            vanished[normalize_name(old)].append(old)
+        if old in current or old.startswith("#") or not is_priority_channel(old):
+            continue
+        tag = split_tag(old)[0]
+        core = normalize_name(old).split("|", 1)[1]
+        for new_tag in TAG_ALIASES.get(tag, (tag,)):
+            vanished[f"{new_tag.upper()}|{core}"].append(old)
+    new = defaultdict(list)
     for name in dict.fromkeys(current_names):
         if name not in known:
             new[normalize_name(name)].append(name)
     renames = {}
     for key, olds in vanished.items():
-        # Earlier renames leave old names behind; they are unambiguous as long as they agree on the ID.
-        if len({known[o] for o in olds}) == 1 and len(new.get(key, [])) == 1:
-            renames[new[key][0]] = {"from": olds[-1], "id": known[olds[0]]}
+        if len({known[o] for o in olds}) == 1:
+            for name in new.get(key, []):
+                renames[name] = {"from": olds[-1], "id": known[olds[0]]}
     return renames
 
 

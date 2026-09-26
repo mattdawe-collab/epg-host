@@ -42,9 +42,36 @@ def test_carry_over_simple_rename():
         "US| CNN FHD": {"from": "US| CNN HD", "id": "CNN.us"}}
 
 
-def test_carry_over_skips_ambiguous_pairs():
-    assert matching.carry_over_renames(["US| CNN FHD", "US| CNN 4K"], {"US| CNN HD": "CNN.us"}) == {}
+def test_carry_over_gives_every_quality_copy_the_same_match():
+    renames = matching.carry_over_renames(["US| CNN FHD", "US| CNN 4K"], {"US| CNN HD": "CNN.us"})
+    assert {n: r["id"] for n, r in renames.items()} == {"US| CNN FHD": "CNN.us", "US| CNN 4K": "CNN.us"}
+
+
+def test_carry_over_skips_when_old_matches_disagree():
     assert matching.carry_over_renames(["US| CNN FHD"], {"US| CNN HD": "CNN.us", "US| CNN SD": "CNNsd.us"}) == {}
+
+
+def test_new_colon_naming_is_recognised():
+    assert matching.is_priority_channel("US: CNN HD")
+    assert matching.is_priority_channel("AT&T: AMC ᴿᴬᵂ")
+    assert matching.is_priority_channel("CA EN: CTV TORONTO")
+    assert not matching.is_priority_channel("FR: TF1")
+    assert matching.extract_core_name("US: CNN HD") == "CNN"
+    assert matching.extract_core_name("AT&T: AMC") == "AMC"
+    assert matching.extract_core_name("CA EN: CTV (CFTO) TORONTO") == "CFTO"
+    assert matching.normalize_name("US: CNN HD") == matching.normalize_name("US| CNN FHD")
+    assert [matching.region_of(n) for n in ("US: CNN", "AT&T: AMC", "TV: FOX", "CA FR: TVA", "NOW: SKY", "PRIME: X")] == \
+        ["US", "US", "US", "CA", "UK", "ALL"]
+
+
+def test_carry_over_follows_regrouped_channels():
+    known = {"SLING| AMC": "AMC.us", "GO| FOX 5": "WNYW.us", "UK-NOWTV| SKY ATLANTIC": "SkyAtlantic.uk",
+             "CA| CTV TORONTO": "CFTO.ca", "US| CNN HD": "CNN.us"}
+    current = ["AT&T: AMC", "TV: FOX 5", "NOW: SKY ATLANTIC", "CA EN: CTV TORONTO", "US: CNN HD", "US: CNN 4K"]
+    renames = matching.carry_over_renames(current, known)
+    assert {n: r["id"] for n, r in renames.items()} == {
+        "AT&T: AMC": "AMC.us", "TV: FOX 5": "WNYW.us", "NOW: SKY ATLANTIC": "SkyAtlantic.uk",
+        "CA EN: CTV TORONTO": "CFTO.ca", "US: CNN HD": "CNN.us", "US: CNN 4K": "CNN.us"}
 
 
 def test_carry_over_ignores_section_headers_and_other_prefixes():
