@@ -277,3 +277,35 @@ def test_quality_words_in_guide_names_do_not_block_a_match():
     index = {"CNN.uk": ["CNN"], "CNN.HD.us2": ["CNN HD"]}
     assert matching.quick_match("US: CNN HD", matching.Pools(by_name, index)) == "CNN.HD.us2"
     assert matching.quick_match("US: CNN 4K", matching.Pools(by_name, index)) == "CNN.HD.us2"
+
+
+STATION_IDS = {"WZTV-DT.us_locals1", "WZTV-DT2.us_locals1", "KIRO-LD.us_locals1", "KIRO-DT.us_locals1", "KIRO.7.ca2",
+               "WWL-DT.us_locals1", "WGBC-DT.us_locals1", "WGBC-DT2.us_locals1", "KTVI-DT.us_locals1", "WEST.gr",
+               "KSHB-DT.us_locals1", "CNN.us"}
+
+
+def station(name):
+    return matching.station_match(name, matching.Stations(STATION_IDS))
+
+
+def test_callsign_in_brackets_picks_the_main_station():
+    assert station("US: FOX 17 (WZTV) NASHVILLE HD") == "WZTV-DT.us_locals1"
+    assert station("US: CBS 7 (KIRO) SEATTLE HD") == "KIRO-DT.us_locals1"
+    assert station("US: CBS 4 (WWL) NEW ORLEANS HD") == "WWL-DT.us_locals1"
+    assert station("US: NBC 30 (WGBC-DT2) MERIDIAN (H) ᴿᴬᵂ") == "WGBC-DT2.us_locals1"
+
+
+def test_bare_callsign_needs_a_network_word_and_a_local_station():
+    assert station("TV: ST. LOUIS, MO KTVI FOX 2 A3 HD COLUMBUS ᶜᶦᵗʸ ᴿᴬᵂ") == "KTVI-DT.us_locals1"
+    assert station("US: NBC KSHB (A) ᴿᴬᵂ") == "KSHB-DT.us_locals1"
+    assert station("US: KTVI SPORTS") is None
+    assert station("US: DEADWOOD 4K") is None
+    assert station("US: NBC SYFY (WEST)") is None
+
+
+def test_station_matches_win_over_legacy_and_auto():
+    names = ["US: FOX 17 (WZTV) NASHVILLE HD"]
+    res = matching.resolve(names, {}, {}, {"WZTV": "WZTV-DT2.us_locals1"}, STATION_IDS,
+                           legacy={"US| FOX 17 (WZTV) NASHVILLE HD": "WZTV-DT2.us_locals1"})
+    assert res.matches == {"US: FOX 17 (WZTV) NASHVILLE HD": "WZTV-DT.us_locals1"}
+    assert res.how == {"US: FOX 17 (WZTV) NASHVILLE HD": "station"}

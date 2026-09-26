@@ -36,6 +36,13 @@ FEED_WORDS = {"WEST", "EAST", "PACIFIC"}
 GENERIC_CORES = {"PPV", "WEST", "EAST", "PACIFIC", "LIVE", "TV", "EVENT", "EVENTS", "HD", "SD", "UHD", "4K",
                  "NEWS", "SPORTS", "MOVIES", "KIDS", "MUSIC"}
 TIMESHIFT = re.compile(r"\+\s?\d")
+STATION_IN_BRACKETS = re.compile(r"\(([KWC][A-Z]{2,3})(?:-(DT\d*|TV|LD|CD))?\)")  # "(WZTV)", "(WWL)", "(WGBC-DT2)"
+BARE_STATION = re.compile(r"\b([KW][A-Z]{3})\b")
+NETWORK_WORD = re.compile(r"\b(ABC|CBS|NBC|FOX|CW|PBS|ION|MY ?NETWORK|MYTV|TELEMUNDO|UNIVISION|UNIMAS|ME ?TV)\b",
+                          re.IGNORECASE)
+STATION_ID = re.compile(r"^([KWC][A-Z]{2,3})(?:-([A-Z]{2}\d*))?\.")  # "WZTV-DT.us_locals1" -> WZTV, DT
+STATION_SUFFIX_RANK = {"DT": 0, "": 1, "TV": 2, "HD": 3, "LD": 4, "CD": 5, "LP": 6}  # the main feed first
+BARE_STATION_STOP_WORDS = {"KIDS", "WILD"}
 NETWORKS = ("ABC", "CBS", "NBC", "FOX", "CW", "PBS")
 HOME_COUNTRIES = {"US": {"us"}, "CA": {"ca"}, "UK": {"uk", "gb"}}
 ANY_HOME = {"us", "ca", "uk", "gb"}  # mixed groups (PRIME, TV, PLAY+...) accept these when nothing better is known
@@ -279,6 +286,44 @@ def carry_over_renames(current_names, known):
     return renames
 
 
+class Stations:
+    """Local TV stations in the guide, by callsign: 'WZTV' -> [('DT', 'WZTV-DT.us_locals1'), ('DT2', ...)]."""
+
+    def __init__(self, valid_ids):
+        self.by_call = defaultdict(list)
+        for xml_id in valid_ids:
+            match = STATION_ID.match(xml_id)
+            if match and match.group(1) not in FEED_WORDS:
+                self.by_call[match.group(1)].append((match.group(2) or "", xml_id))
+
+    def find(self, call, suffix=None):
+        """The station's main feed (-DT, preferring the US locals source), or exactly the requested sub-feed."""
+        options = self.by_call.get(call, [])
+        if suffix:
+            exact = sorted(i for s, i in options if s == suffix)
+            return exact[0] if exact else None
+        ranked = sorted((STATION_SUFFIX_RANK[s], not i.endswith(".us_locals1"), i)
+                        for s, i in options if s in STATION_SUFFIX_RANK)
+        return ranked[0][2] if ranked else None
+
+
+def station_match(channel_name, stations):
+    """A local affiliate by callsign: '(WZTV)' in the name, or a bare 'KTVI' next to a network word like FOX."""
+    for call, suffix in STATION_IN_BRACKETS.findall(channel_name):
+        if call not in FEED_WORDS:
+            found = stations.find(call, suffix or None)
+            if found:
+                return found
+    if NETWORK_WORD.search(channel_name):
+        for call in BARE_STATION.findall(strip_decorations(channel_name)):
+            if call in FEED_WORDS or call in BARE_STATION_STOP_WORDS:
+                continue
+            found = stations.find(call)
+            if found and found.endswith(".us_locals1"):
+                return found
+    return None
+
+
 def quick_match(channel_name, pools, expected_country=None, id_countries=None):
     """A strict automatic match: nearly identical name, right country, never a +1 feed, never a generic word,
     never a placeholder. Every guide sharing the display name is considered, so the right country can be found."""
@@ -314,6 +359,7 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
     expected = expected or {}
     id_countries = id_countries or {}
     pools = Pools(by_name, index)
+    stations = Stations(valid_ids)
     renames_known = carry_over_renames(names, known)
     renames_legacy = carry_over_renames(names, legacy)
     result = Resolution()
@@ -342,6 +388,9 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
             result.counts["no_guide"] += 1
         elif NO_GUIDE_PATTERN.search(name):
             result.counts["no_guide_auto"] += 1
+        elif (station := station_match(name, stations)) and station not in refused \
+                and not flag_reasons(name, station, expected.get(name), id_countries.get(station)):
+            accept(name, station, "station", "station")
         elif old and usable(old, trusted=False):
             accept(name, old, "legacy", "legacy")
         elif rename and usable(rename["id"], trusted=rename_trusted):
