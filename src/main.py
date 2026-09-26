@@ -47,29 +47,30 @@ def load_json(path, default):
 
 
 def get_channel_list(mode, known, previous_channels):
-    """Return (names, provider_ids, description, login_problem). `known` holds every saved name."""
+    """Return (names, provider_ids, expected_countries, description, login_problem). `known` holds every saved name."""
     saved = [n for n in known if not n.startswith("#") and matching.is_priority_channel(n)]
     if mode == "known":
-        return saved, {}, "saved matches", None
+        return saved, {}, {}, "saved matches", None
     fallback = previous_channels or saved
     label = "last night's list" if previous_channels else "saved matches"
     url, user, password = (os.getenv(k, "").strip() for k in ("XC_URL", "XC_USERNAME", "XC_PASSWORD"))
     if not (url and user and password):
-        return fallback, {}, f"{label} (login not configured)", f"The IPTV login is not configured - {LOGIN_HELP}."
+        return fallback, {}, {}, f"{label} (login not configured)", f"The IPTV login is not configured - {LOGIN_HELP}."
     try:
         channels = provider.fetch_channels(url, user, password)
     except provider.LoginRejected as e:
-        return fallback, {}, f"{label} (login rejected)", (
+        return fallback, {}, {}, f"{label} (login rejected)", (
             f"The provider rejected the IPTV login ({e}). If the same login works on the PC, the provider "
             f"is blocking GitHub; otherwise {LOGIN_HELP}.")
     except provider.ProviderUnavailable as e:
         ui.warn(f"Provider unavailable ({e}) - using {label}")
-        return fallback, {}, f"{label} (provider unavailable)", None
+        return fallback, {}, {}, f"{label} (provider unavailable)", None
     names = [c["name"] for c in channels if matching.is_priority_channel(c["name"])]
     if not names:
-        return fallback, {}, f"{label} (provider returned no channels)", (
+        return fallback, {}, {}, f"{label} (provider returned no channels)", (
             f"The provider returned no channels - the account may have expired. Check it, then {LOGIN_HELP}.")
-    return names, {c["name"]: c["epg_id"] for c in channels if c["epg_id"]}, "provider", None
+    provider_ids = {c["name"]: c["epg_id"] for c in channels if c["epg_id"]}
+    return names, provider_ids, matching.expected_countries(channels), "provider", None
 
 
 def pct(value):
@@ -119,7 +120,7 @@ def main(argv=None):
     previous_history = load_json(prev and os.path.join(prev, "score_history.json"), [])
 
     ui.step(1, 5, "Channel list")
-    names, provider_ids, list_source, login_problem = get_channel_list(args.channels_from, {**legacy, **known}, previous_channels)
+    names, provider_ids, expected, list_source, login_problem = get_channel_list(args.channels_from, {**legacy, **known}, previous_channels)
     unwritable = [n for n in names if NOT_XML_SAFE.search(n)]
     if unwritable:
         ui.warn(f"Skipping {len(unwritable)} channel name(s) with characters XML cannot hold")
@@ -135,7 +136,8 @@ def main(argv=None):
     ref = epg_cache.fetch_reference_data(epg_cache.SOURCES, args.cache_dir, args.cache_max_age)
 
     ui.step(3, 5, "Matching (no AI)")
-    result = matching.resolve(names, known, no_guide, ref.by_name, ref.valid_ids, provider_ids, rejected, legacy)
+    result = matching.resolve(names, known, no_guide, ref.by_name, ref.valid_ids, provider_ids, rejected, legacy,
+                              index=ref.index, expected=expected)
     ui.info(", ".join(f"{k}: {v:,}" for k, v in sorted(result.counts.items())))
 
     ui.step(4, 5, "Building guide")
@@ -150,7 +152,7 @@ def main(argv=None):
         size = os.path.getsize(build_path)
 
     settled = result.counts["no_guide"] + result.counts["no_guide_auto"]
-    card = score.scorecard(len(names), result.matches, stats, audit_log, settled_no_guide=settled)
+    card = score.scorecard(len(names), result.matches, stats, audit_log, settled_no_guide=settled, expected=expected)
     history = score.update_history(previous_history, now.date().isoformat(), card)
     previous_names = set(previous_channels or [])
     added = sorted(set(names) - previous_names) if previous_channels else []

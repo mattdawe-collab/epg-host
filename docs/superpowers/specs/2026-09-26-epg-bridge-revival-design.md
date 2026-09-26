@@ -135,6 +135,17 @@ These changes followed:
 - **Coverage** is measured against channels that can have a guide: settled no-guide channels are left out.
 - **First build after the fixes:** 3,220 channels in the guide, 1,183 auto no-guide, 4,483 queued. Coverage 41.8%, fresh 93.3%, 0 flagged.
 
+## Country-aware matching (after the second audit, 2026-09-26)
+
+After the first fixes, automatic matches were 79% correct and carried-over matches 68%. The remaining errors were foreign feeds in mixed-country groups, placeholder guides and 24/7 show loops. Changes:
+
+- **Each channel's expected country** comes from the provider's own guide ID. Failing that, it comes from its playlist section (`#### ... ####` header block), when the section has at least 2 hints and 60% agree. That country overrides the group's home country.
+- **Mixed groups** (TV, PRIME, PLAY+, 4K, ENGLISH, SPORTS) with no known country accept only US/CA/UK guides. Any other country is flagged `foreign`. Platform guides (`.plex`, `.distro`) are fine.
+- **Placeholder guides** (`*Dummy*`) are flagged `placeholder` and never used automatically.
+- **Automatic matching** looks at every guide sharing a display name, so it can find, say, Nova.es rather than the first source's Nova.cz.
+- **Gemini-era (legacy) matches** must also *resemble* the guide. That means a shared callsign, an equal name once spaces are removed ("RDS 2" ~ "RDS2 HD"), or a shared real word. Accents are folded (Évasion ~ Evasion).
+- **Build after these changes:** 777 automatic, 1,770 carried, 1,183 auto no-guide, 5,156 queued. Coverage 33.1%, fresh 95.3%.
+
 ## Scorecard (requested 2026-09-26)
 
 Every nightly run scores the guide. The scores go in `status.json`, the run summary and `score_history.json` on `main`. The history is carried forward from last night's copy, keeping 365 days.

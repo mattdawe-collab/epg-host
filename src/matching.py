@@ -38,6 +38,8 @@ GENERIC_CORES = {"PPV", "WEST", "EAST", "PACIFIC", "LIVE", "TV", "EVENT", "EVENT
 TIMESHIFT = re.compile(r"\+\s?\d")
 NETWORKS = ("ABC", "CBS", "NBC", "FOX", "CW", "PBS")
 HOME_COUNTRIES = {"US": {"us"}, "CA": {"ca"}, "UK": {"uk", "gb"}}
+ANY_HOME = {"us", "ca", "uk", "gb"}  # mixed groups (PRIME, TV, PLAY+...) accept these when nothing better is known
+RESEMBLE_STOP_WORDS = {"THE", "AND", "CHANNEL", "NETWORK", "PLUS", "TV"}
 COUNTRY_SUFFIX = re.compile(r"^([a-z]{2})(?:\d+|_.*)?$")  # ".us", ".ca2", ".us_locals1"; ".plex"/".com" are not countries
 
 
@@ -56,6 +58,11 @@ def split_tag(name):
 def strip_decorations(text):
     """Blank out superscript quality marks (ᴴᴰ ᴿᴬᵂ ³⁸⁴⁰ᴾ) and symbols such as ◉."""
     return "".join(" " if unicodedata.category(ch) in ("Lm", "No", "So", "Sk") else ch for ch in text)
+
+
+def fold_accents(text):
+    """'Évasion' -> 'Evasion'."""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if unicodedata.category(ch) != "Mn")
 
 
 def extract_core_name(channel_name):
@@ -82,7 +89,7 @@ def normalize_name(name):
         prefix, sep, rest = name.partition("| ")
         if not sep:
             prefix, rest = "", name
-    rest = QUALITY_WORDS.sub(" ", strip_decorations(rest).replace("+", " PLUS "))
+    rest = QUALITY_WORDS.sub(" ", fold_accents(strip_decorations(rest)).replace("+", " PLUS "))
     rest = " ".join(re.sub(r"[^0-9A-Za-z]+", " ", rest).upper().split())
     return f"{prefix.strip().upper()}|{rest}"
 
@@ -99,26 +106,106 @@ def region_of(channel_name):
     return "ALL"
 
 
-def flag_reasons(name, xml_id):
-    """Free checks for a probably-wrong match: wrong country, wrong callsign, wrong network."""
+def country_of(xml_id):
+    """Two-letter country code of a guide ID ('CNN.us' -> 'us', 'X.us_locals1' -> 'us'); None for '.plex' etc."""
+    match = COUNTRY_SUFFIX.match(xml_id.rsplit(".", 1)[-1].lower()) if xml_id and "." in xml_id else None
+    return match.group(1) if match else None
+
+
+def same_country(a, b):
+    return a == b or {a, b} <= {"uk", "gb"}
+
+
+def flag_reasons(name, xml_id, expected_country=None):
+    """Free checks for a probably-wrong match: wrong country, wrong callsign, wrong network, placeholder guide.
+    expected_country (from the provider's playlist) overrides the group's home country."""
     reasons = []
     region = region_of(name)
-    country = COUNTRY_SUFFIX.match(xml_id.rsplit(".", 1)[-1].lower()) if "." in xml_id else None
-    if region in HOME_COUNTRIES and country and country.group(1) not in HOME_COUNTRIES[region]:
-        reasons.append("region")
+    country = country_of(xml_id)
+    if country:
+        if expected_country:
+            if not same_country(country, expected_country):
+                reasons.append("region")
+        elif region in HOME_COUNTRIES:
+            if country not in HOME_COUNTRIES[region]:
+                reasons.append("region")
+        elif country not in ANY_HOME:
+            reasons.append("foreign")
     if any(c not in FEED_WORDS and c not in xml_id.upper() for c in CALLSIGN_IN_NAME.findall(name)):
         reasons.append("callsign")
     in_name = {n for n in NETWORKS if re.search(rf"\b{n}\b", name.upper())}
     in_id = {n for n in NETWORKS if n in xml_id.upper()}
     if in_name and in_id and not (in_name & in_id):
         reasons.append("network")
+    if "dummy" in xml_id.lower():
+        reasons.append("placeholder")
     return reasons
 
 
-class Pools:
-    """Display-name pools per region, prepared once for fast searching."""
+def expected_countries(channels):
+    """name -> expected guide country, from the provider's own guide ID for the channel or, failing that,
+    from the other channels in the same playlist section (the '#### ... ####' header block).
+    A section needs at least two hints, 60% of them agreeing."""
+    block_of, hints = {}, defaultdict(list)
+    block = None
+    for channel in channels:
+        name = channel["name"]
+        if name.startswith("#"):
+            block = name
+            continue
+        block_of[name] = block
+        code = country_of(channel.get("epg_id") or "")
+        if code:
+            hints[block].append("uk" if code == "gb" else code)
+    block_country = {}
+    for key, codes in hints.items():
+        top, count = Counter(codes).most_common(1)[0]
+        if count >= 2 and count / len(codes) >= 0.6:
+            block_country[key] = top
+    result = {}
+    for channel in channels:
+        name = channel["name"]
+        if name.startswith("#"):
+            continue
+        country = country_of(channel.get("epg_id") or "") or block_country.get(block_of[name])
+        if country:
+            result[name] = "uk" if country == "gb" else country
+    return result
 
-    def __init__(self, by_name):
+
+def resembles(channel_name, xml_id, index):
+    """Does the guide's name share a real word (or the callsign) with the channel? Catches semantic leaps such as
+    a 24/7 'GAME OF THRONES' loop given the HBO East schedule."""
+    if any(c not in FEED_WORDS and c in xml_id.upper() for c in CALLSIGN_IN_NAME.findall(channel_name)):
+        return True
+    guide = [normalize_name(n).split("|", 1)[1] for n in index.get(xml_id, [])]
+    channel = normalize_name(channel_name).split("|", 1)[1]
+    squeezed = channel.replace(" ", "")
+    for g in guide:  # same name once spaces go: "RDS 2" ~ "RDS2 HD", "C-SPAN 1" ~ "CSPAN"
+        g_squeezed = g.replace(" ", "")
+        if squeezed == g_squeezed or (len(squeezed) >= 5 and squeezed in g_squeezed) \
+                or (len(g_squeezed) >= 5 and g_squeezed in squeezed):
+            return True
+    guide_words = {w for g in guide for w in g.split()}
+    joined = " ".join(g.replace(" ", "") for g in guide)
+    words = [w for w in channel.split() if len(w) >= 3 and w not in RESEMBLE_STOP_WORDS]
+    return any(w in guide_words or (len(w) >= 5 and w in joined) for w in words)
+
+
+class Pools:
+    """Display-name pools per region, prepared once for fast searching. `index` (guide ID -> display names)
+    lets automatic matching see every guide sharing a display name, not just the first source's."""
+
+    def __init__(self, by_name, index=None):
+        self.ids_by_name = defaultdict(list)
+        for xml_id, display_names in (index or {}).items():
+            for display in display_names:
+                self.ids_by_name[display].append(xml_id)
+        for display, xml_id in by_name.items():
+            if xml_id not in self.ids_by_name[display]:
+                self.ids_by_name[display].append(xml_id)
+        self._all_names = list(self.ids_by_name)
+        self._all_processed = [utils.default_process(n) for n in self._all_names]
         regional = {r: {n: i for n, i in by_name.items() if is_region(i, r.lower())} for r in ("US", "CA", "UK")}
         self.maps = {r: (m or by_name) for r, m in regional.items()}
         self.maps["ALL"] = by_name
@@ -126,11 +213,11 @@ class Pools:
         self._lower = {r: [n.lower() for n in names] for r, names in self._names.items()}
         self._processed = {r: [utils.default_process(n) for n in names] for r, names in self._names.items()}
 
-    def close(self, region, text, cutoff, limit=5):
+    def close_names(self, text, cutoff, limit=10):
         """Display names nearly identical to text (plain ratio, no partial matching), best first."""
-        hits = process.extract(utils.default_process(text), self._processed[region],
+        hits = process.extract(utils.default_process(text), self._all_processed,
                                scorer=fuzz.ratio, processor=None, score_cutoff=cutoff, limit=limit)
-        return [(self._names[region][i], self.maps[region][self._names[region][i]]) for _, _, i in hits]
+        return [self._all_names[i] for _, _, i in hits]
 
     def candidates(self, region, channel_name, limit=10):
         names, lower, pool = self._names[region], self._lower[region], self.maps[region]
@@ -190,25 +277,21 @@ def carry_over_renames(current_names, known):
     return renames
 
 
-def quick_match(channel_name, by_name, pools):
-    """A strict automatic match: same country, nearly identical name, never a +1 feed, never a generic word."""
+def quick_match(channel_name, pools, expected_country=None):
+    """A strict automatic match: nearly identical name, right country, never a +1 feed, never a generic word,
+    never a placeholder. Every guide sharing the display name is considered, so the right country can be found."""
     if NO_GUIDE_PATTERN.search(channel_name):
         return None
     core = extract_core_name(channel_name)
     if len(core) < 3 or core.upper() in GENERIC_CORES:
         return None
-    region = region_of(channel_name)
     wants_timeshift = bool(TIMESHIFT.search(channel_name))
-
-    def acceptable(display, xml_id):
-        return bool(TIMESHIFT.search(display)) == wants_timeshift and not flag_reasons(channel_name, xml_id)
-
-    pool = pools.maps[region]
-    if core in pool and acceptable(core, pool[core]):
-        return pool[core]
-    for display, xml_id in pools.close(region, core, AUTO_MATCH_SCORE):
-        if acceptable(display, xml_id):
-            return xml_id
+    for display in pools.close_names(core, AUTO_MATCH_SCORE):
+        if bool(TIMESHIFT.search(display)) != wants_timeshift:
+            continue
+        for xml_id in pools.ids_by_name[display]:
+            if not flag_reasons(channel_name, xml_id, expected_country):
+                return xml_id
     return None
 
 
@@ -222,11 +305,12 @@ class Resolution:
 
 
 def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejected=None, legacy=None,
-            max_candidates=10):
+            index=None, expected=None, max_candidates=10):
     provider_ids = provider_ids or {}
     rejected = rejected or {}
     legacy = legacy or {}
-    pools = Pools(by_name)
+    expected = expected or {}
+    pools = Pools(by_name, index)
     renames_known = carry_over_renames(names, known)
     renames_legacy = carry_over_renames(names, legacy)
     result = Resolution()
@@ -241,8 +325,10 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
         refused = set(rejected.get(name, ()))
 
         def usable(xml_id, trusted):
-            return (xml_id in valid_ids and xml_id not in refused
-                    and (trusted or not flag_reasons(name, xml_id)))
+            if xml_id not in valid_ids or xml_id in refused:
+                return False
+            return trusted or (not flag_reasons(name, xml_id, expected.get(name))
+                               and (index is None or resembles(name, xml_id, index)))
 
         old = legacy.get(name)
         rename = renames_known.get(name) or renames_legacy.get(name)
@@ -258,7 +344,7 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
         elif rename and usable(rename["id"], trusted=rename_trusted):
             accept(name, rename["id"], "renamed", "carried")
             result.carried[name] = rename
-        elif (auto := quick_match(name, by_name, pools)) and auto not in refused:
+        elif (auto := quick_match(name, pools, expected.get(name))) and auto not in refused:
             accept(name, auto, "auto", "auto")
         else:
             hint = saved or old or (rename or {}).get("id")

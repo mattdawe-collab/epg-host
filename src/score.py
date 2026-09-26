@@ -14,11 +14,12 @@ def audited_accuracy(audit_log):
     return sum(e["verdict"] == "correct" for e in recent) / len(recent), len(recent)
 
 
-def scorecard(total_channels, matches, stats, audit_log, settled_no_guide=0):
+def scorecard(total_channels, matches, stats, audit_log, settled_no_guide=0, expected=None):
     """Coverage counts only channels that can have a guide: channels settled as 'no guide' are left out."""
+    expected = expected or {}
     flags = {}
     for name, xml_id in matches.items():
-        reasons = flag_reasons(name, xml_id)
+        reasons = flag_reasons(name, xml_id, expected.get(name))
         if reasons:
             flags[name] = reasons
     guideable = total_channels - settled_no_guide

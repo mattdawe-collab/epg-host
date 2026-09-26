@@ -60,3 +60,8 @@ def test_coverage_leaves_out_channels_settled_as_no_guide():
     stats = GuideStats(channels=3, programmes=10, channels_with_upcoming=3, skipped_duplicates=0, skipped_out_of_window=0)
     card = score.scorecard(10, {"US| A": "A.us", "US| B": "B.us", "US| C": "C.us"}, stats, [], settled_no_guide=4)
     assert card["coverage"] == 0.5
+
+
+def test_scorecard_flags_use_expected_countries():
+    stats = GuideStats(channels=1, programmes=1, channels_with_upcoming=1, skipped_duplicates=0, skipped_out_of_window=0)
+    assert score.scorecard(1, {"TV: NOVA": "Nova.cz"}, stats, [], expected={"TV: NOVA": "es"})["flags"] == {"TV: NOVA": ["region"]}

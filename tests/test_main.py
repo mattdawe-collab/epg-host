@@ -130,3 +130,17 @@ def test_failed_checks_return_2_and_publish_nothing(env):
     write_data(env, {"US| CNN HD": "CNN.us"})
     assert run(env, "--channels-from", "known") == 2
     assert not (env / "publish").exists()
+
+
+def test_expected_country_from_the_playlist_steers_matching(env, monkeypatch):
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    write_data(env, {"US| CNN HD": "CNN.us"})
+    monkeypatch.setattr(main.provider, "fetch_channels", lambda *a, **k: [
+        {"name": "#### SPAIN ####", "epg_id": None},
+        {"name": "TV: BBC ONE", "epg_id": "bbcone.es"},
+        {"name": "TV: OTHER", "epg_id": "other.es"},
+        {"name": "US: CNN HD", "epg_id": None}])
+    assert run(env) == 0
+    matches = published(env, "matches.json")
+    assert "TV: BBC ONE" not in matches  # only a .uk guide exists, but the playlist says this channel is Spanish
+    assert matches["US: CNN HD"]["id"] == "CNN.us"

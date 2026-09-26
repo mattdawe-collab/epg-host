@@ -154,8 +154,8 @@ def test_feed_words_are_not_callsigns():
     assert matching.extract_core_name("US: NBC SYFY (WEST)") == "NBC SYFY"
 
 
-def auto(name, by_name):
-    return matching.quick_match(name, by_name, matching.Pools(by_name))
+def auto(name, by_name, index=None, expected_country=None):
+    return matching.quick_match(name, matching.Pools(by_name, index), expected_country)
 
 
 def test_auto_match_stays_in_the_channel_country():
@@ -195,3 +195,65 @@ def test_session_decisions_are_trusted_even_when_flagged():
 
 def test_flag_reasons_live_in_matching():
     assert matching.flag_reasons("US| CNN", "CNN.uk") == ["region"]
+
+
+def test_mixed_groups_only_take_home_countries_unless_the_country_is_known():
+    assert matching.flag_reasons("TV: NOVA", "Nova.cz") == ["foreign"]
+    assert matching.flag_reasons("TV: NOVA", "Nova.es", expected_country="es") == []
+    assert matching.flag_reasons("TV: NOVA", "Nova.cz", expected_country="es") == ["region"]
+    assert matching.flag_reasons("TV: SNL VAULT", "plex.tv.SNL.Vault.plex") == []
+    assert matching.flag_reasons("PRIME: AMC", "AMC.us") == []
+    assert matching.flag_reasons("CA: CNN", "CNN.us", expected_country="us") == []
+
+
+def test_placeholder_guides_are_flagged():
+    assert "placeholder" in matching.flag_reasons("US: PEACOCK ORIGINAL 5", "Peacock.Dummy.us")
+
+
+def test_expected_country_comes_from_the_channel_or_its_playlist_section():
+    channels = [
+        {"name": "#### CABEL TV ####", "epg_id": None},
+        {"name": "TV: NOVA", "epg_id": "nova.es"},
+        {"name": "TV: EUROSPORT 1", "epg_id": "eurosport1.es"},
+        {"name": "TV: WARNER TV", "epg_id": None},
+        {"name": "#### ISRAEL ####", "epg_id": None},
+        {"name": "TV: YES CINEMA", "epg_id": "yescinema.il"},
+        {"name": "TV: ONE HINT ONLY", "epg_id": None},
+        {"name": "#### MIXED ####", "epg_id": None},
+        {"name": "TV: A", "epg_id": "a.es"},
+        {"name": "TV: B", "epg_id": "b.il"},
+        {"name": "TV: C", "epg_id": None},
+    ]
+    assert matching.expected_countries(channels) == {
+        "TV: NOVA": "es", "TV: EUROSPORT 1": "es", "TV: WARNER TV": "es", "TV: YES CINEMA": "il",
+        "TV: A": "es", "TV: B": "il"}
+
+
+def test_auto_match_finds_the_expected_country_among_same_named_guides():
+    by_name = {"Nova": "Nova.cz"}
+    index = {"Nova.cz": ["Nova"], "Nova.es": ["Nova"]}
+    assert auto("TV: NOVA", by_name, index, expected_country="es") == "Nova.es"
+    assert auto("TV: NOVA", by_name, index) is None
+
+
+def test_legacy_matches_must_resemble_the_guide():
+    index = {"HBO.East.us2": ["HBO East"], "CNN.us": ["CNN"], "WITI-DT.us_locals1": ["WITI-DT"]}
+    legacy = {"US| GAME OF THRONES FHD": "HBO.East.us2", "US| CNN HD": "CNN.us", "US| FOX 6 MILWAUKEE (WITI)": "WITI-DT.us_locals1"}
+    names = ["US: GAME OF THRONES 4K", "US: CNN HD", "US: FOX 6 MILWAUKEE (WITI)"]
+    res = matching.resolve(names, {}, {}, {}, set(index), legacy=legacy, index=index)
+    assert res.matches == {"US: CNN HD": "CNN.us", "US: FOX 6 MILWAUKEE (WITI)": "WITI-DT.us_locals1"}
+    assert [e["name"] for e in res.queue] == ["US: GAME OF THRONES 4K"]
+
+
+def test_resemblance_ignores_spacing_and_accents_but_not_different_numbers():
+    def ok(name, xml_id, display):
+        return matching.resembles(name, xml_id, {xml_id: [display]})
+    assert ok("CA: RDS 2", "RDS2.HD.ca2", "RDS2 HD")
+    assert ok("UK: CHANNEL 4 HEVC 4K", "Channel.4.HD.uk", "Channel 4 HD")
+    assert ok("US: C-SPAN 1 HD", "CSPAN.us2", "CSPAN")
+    assert ok("CA: EVASION", "Évasion.HD.ca2", "Évasion HD")
+    assert ok("UK: E4 +1", "E4+1.uk", "E4+1")
+    assert not ok("CA: RDS", "RDS2.HD.ca2", "RDS2 HD")
+    assert not ok("UK: REALITY SHOW 6", "TNT.Sports.6.HD.uk", "TNT Sports 6 HD")
+    assert not ok("US: WHERE ARE YOU 4K", "WYOU-DT.us_locals1", "WYOU-DT")
+    assert matching.normalize_name("CA: ÉVASION") == matching.normalize_name("CA| EVASION")
