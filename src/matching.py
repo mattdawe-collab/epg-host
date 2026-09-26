@@ -206,7 +206,8 @@ class Pools:
             if xml_id not in self.ids_by_name[display]:
                 self.ids_by_name[display].append(xml_id)
         self._all_names = list(self.ids_by_name)
-        self._all_processed = [utils.default_process(n) for n in self._all_names]
+        # compare on names without quality words or decorations: "CNN HD" in a guide must match a channel "CNN"
+        self._all_processed = [utils.default_process(QUALITY_WORDS.sub(" ", strip_decorations(n))) for n in self._all_names]
         regional = {r: {n: i for n, i in by_name.items() if is_region(i, r.lower())} for r in ("US", "CA", "UK")}
         self.maps = {r: (m or by_name) for r, m in regional.items()}
         self.maps["ALL"] = by_name

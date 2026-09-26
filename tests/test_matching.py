@@ -270,3 +270,10 @@ def test_numeric_guide_ids_get_their_source_country():
 
 def test_ppv_guides_are_placeholders():
     assert "placeholder" in matching.flag_reasons("CA EN: ROGERS SUPER SPORTS PACK 24", "PPV.Sports.ca2")
+
+
+def test_quality_words_in_guide_names_do_not_block_a_match():
+    by_name = {"CNN": "CNN.uk", "CNN HD": "CNN.HD.us2"}
+    index = {"CNN.uk": ["CNN"], "CNN.HD.us2": ["CNN HD"]}
+    assert matching.quick_match("US: CNN HD", matching.Pools(by_name, index)) == "CNN.HD.us2"
+    assert matching.quick_match("US: CNN 4K", matching.Pools(by_name, index)) == "CNN.HD.us2"
