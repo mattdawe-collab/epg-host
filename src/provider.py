@@ -1,6 +1,7 @@
 """Fetch the channel list from the IPTV provider's Xtream Codes API."""
+import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, quote_plus, urlparse
 
 import requests
 
@@ -14,8 +15,14 @@ class ProviderUnavailable(Exception):
 
 
 def redact(text, secrets):
-    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
-        text = text.replace(secret, "***")
+    """Drop query strings, then every raw and URL-encoded form of each secret. Logs are public."""
+    text = re.sub(r"\?[^\s'\"()]*", "?***", text)
+    forms = set()
+    for secret in secrets:
+        if secret:
+            forms |= {secret, quote(secret, safe=""), quote_plus(secret)}
+    for form in sorted(forms, key=len, reverse=True):
+        text = text.replace(form, "***")
     return text
 
 
@@ -47,6 +54,9 @@ def fetch_channels(url, username, password, timeout=60, attempts=3, sleep=time.s
             info = data.get("user_info")
             if isinstance(info, dict) and str(info.get("auth")) == "0":
                 raise LoginRejected("auth=0")
+            problem = "unexpected response shape"
+            continue
+        if not isinstance(data, list):
             problem = "unexpected response shape"
             continue
         channels = []

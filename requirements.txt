@@ -1,4 +1,4 @@
 requests
 python-dotenv
-lxml
+lxml>=5
 rapidfuzz>=3

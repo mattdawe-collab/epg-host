@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from lxml import etree
 
 import guide
-from fixtures_xmltv import make_source
+from fixtures_xmltv import make_entity_source, make_source
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
 HOUR = timedelta(hours=1)
@@ -68,6 +68,18 @@ def test_corrupt_source_is_skipped(tmp_path):
     channels, programmes = read_guide(out)
     assert channels == ["US| CNN"]
     assert programmes[0] == ("US| CNN", "Good")
+
+
+def test_external_entities_never_reach_the_guide(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET")
+    good, evil, out = tmp_path / "good.xml.gz", tmp_path / "evil.xml.gz", tmp_path / "guide.xml.gz"
+    make_source(good, [("CNN.us", NOW, NOW + HOUR, "Good")])
+    make_entity_source(evil, secret, "CNN.us", NOW + 2 * HOUR, NOW + 3 * HOUR)
+    guide.write_guide(str(out), {"US| CNN": "CNN.us"}, [str(good), str(evil)], NOW)
+    with gzip.open(out, "rb") as f:
+        assert b"TOPSECRET" not in f.read()
+    assert read_guide(out)[1][0] == ("US| CNN", "Good")
 
 
 def test_parse_xmltv_time():

@@ -63,7 +63,8 @@ def parse_epg_channels(path):
     by_name, ids, index = {}, set(), {}
     try:
         with gzip.open(path, "rb") as f:
-            for _, elem in etree.iterparse(f, events=("end",), tag=("channel", "programme")):
+            for _, elem in etree.iterparse(f, events=("end",), tag=("channel", "programme"),
+                                           resolve_entities="internal", no_network=True):
                 if elem.tag == "programme":
                     break
                 channel_id = (elem.get("id") or "").strip()

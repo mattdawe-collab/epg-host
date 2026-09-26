@@ -86,5 +86,26 @@ def test_server_errors_become_unavailable(monkeypatch):
         provider.fetch_channels("http://h", "u", "p", sleep=no_sleep)
 
 
+def test_url_encoded_credentials_are_redacted(monkeypatch):
+    user, password = "us er", "p@ss w/rd#1"
+    url = requests.Request("GET", "http://host.example/player_api.php",
+                           params={"username": user, "password": password, "action": "get_live_streams"}).prepare().url
+    message = f"HTTPConnectionPool(host='host.example', port=80): Max retries exceeded with url: {url.split('host.example', 1)[1]}"
+    get, _ = fake_get([requests.ConnectionError(message) for _ in range(3)])
+    monkeypatch.setattr(provider.requests, "get", get)
+    with pytest.raises(provider.ProviderUnavailable) as caught:
+        provider.fetch_channels("http://host.example", user, password, sleep=no_sleep)
+    text = str(caught.value)
+    for leaked in ("p%40ss", "p@ss", "w%2Frd", "us+er", "us%20er", "host.example", "password="):
+        assert leaked not in text, leaked
+
+
+def test_non_list_json_is_unavailable(monkeypatch):
+    get, _ = fake_get([FakeResponse(200, 5) for _ in range(3)])
+    monkeypatch.setattr(provider.requests, "get", get)
+    with pytest.raises(provider.ProviderUnavailable):
+        provider.fetch_channels("http://h", "u", "p", sleep=no_sleep)
+
+
 def test_redact_replaces_longest_secrets_first():
     assert provider.redact("http://host.example host.example u1 pw", ["u1", "pw", "http://host.example", "host.example", ""]) == "*** *** *** ***"

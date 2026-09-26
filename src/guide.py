@@ -53,7 +53,9 @@ def write_guide(out_path, matches, source_paths, now, days_ahead=8.0, days_behin
             for path in source_paths:
                 try:
                     with gzip.open(path, "rb") as src:
-                        for _, elem in etree.iterparse(src, events=("end",), tag="programme"):
+                        # Sources are third-party files: never let them pull local files in via entities.
+                        for _, elem in etree.iterparse(src, events=("end",), tag="programme",
+                                                       resolve_entities="internal", no_network=True):
                             xml_id = elem.get("channel")
                             if xml_id in names_by_id:
                                 start = parse_xmltv_time(elem.get("start"))

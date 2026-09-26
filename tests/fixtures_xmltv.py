@@ -22,3 +22,13 @@ def make_source(path, programmes, names=None):
         etree.SubElement(programme, "title").text = title
     with gzip.open(path, "wb") as f:
         f.write(etree.tostring(root, xml_declaration=True, encoding="utf-8"))
+
+
+def make_entity_source(path, secret_file, channel_id, start, stop):
+    """A source whose names and titles pull in a local file through an external entity."""
+    xml = (f'<?xml version="1.0"?><!DOCTYPE tv [<!ENTITY x SYSTEM "{secret_file.as_uri()}">]>'
+           f'<tv><channel id="{channel_id}"><display-name>&x;</display-name></channel>'
+           f'<programme start="{xmltv_time(start)}" stop="{xmltv_time(stop)}" channel="{channel_id}">'
+           f'<title>&x;</title></programme></tv>')
+    with gzip.open(path, "wb") as f:
+        f.write(xml.encode("utf-8"))

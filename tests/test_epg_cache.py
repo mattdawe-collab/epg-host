@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from lxml import etree
 
 import epg_cache
-from fixtures_xmltv import make_source, xmltv_time
+from fixtures_xmltv import make_entity_source, make_source, xmltv_time
 
 NOW = datetime.now(timezone.utc)
 
@@ -96,6 +96,14 @@ def test_download_saves_gzip(tmp_path, monkeypatch):
     monkeypatch.setattr(epg_cache.requests, "get", lambda *a, **k: FakeDownload(b"\x1f\x8bNEW"))
     assert epg_cache.download_file("https://example.invalid/a", str(dest)) is True
     assert dest.read_bytes() == b"\x1f\x8bNEW"
+
+
+def test_external_entities_are_not_expanded(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET")
+    src = tmp_path / "evil.xml.gz"
+    make_entity_source(src, secret, "Evil.us", NOW, NOW + timedelta(hours=1))
+    assert "TOPSECRET" not in repr(epg_cache.parse_epg_channels(str(src)))
 
 
 def test_sources_drop_dead_epghub():
