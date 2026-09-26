@@ -37,7 +37,7 @@ GENERIC_CORES = {"PPV", "WEST", "EAST", "PACIFIC", "LIVE", "TV", "EVENT", "EVENT
                  "NEWS", "SPORTS", "MOVIES", "KIDS", "MUSIC"}
 TIMESHIFT = re.compile(r"\+\s?\d")
 STATION_IN_BRACKETS = re.compile(r"\(([KWC][A-Z]{2,3})(?:-(DT\d*|TV|LD|CD))?\)")  # "(WZTV)", "(WWL)", "(WGBC-DT2)"
-BARE_STATION = re.compile(r"\b([KW][A-Z]{3})\b")
+BARE_STATION = re.compile(r"\b([KW][A-Z]{3})(?:-DT?(\d+))?\b")  # "KTVI", or "KMOV-D2" for sub-channel 2
 NETWORK_WORD = re.compile(r"\b(ABC|CBS|NBC|FOX|CW|PBS|ION|MY ?NETWORK|MYTV|TELEMUNDO|UNIVISION|UNIMAS|ME ?TV)\b",
                           re.IGNORECASE)
 STATION_ID = re.compile(r"^([KWC][A-Z]{2,3})(?:-([A-Z]{2}\d*))?\.")  # "WZTV-DT.us_locals1" -> WZTV, DT
@@ -315,10 +315,12 @@ def station_match(channel_name, stations):
             if found:
                 return found
     if NETWORK_WORD.search(channel_name):
-        for call in BARE_STATION.findall(strip_decorations(channel_name)):
+        for call, subchannel in BARE_STATION.findall(strip_decorations(channel_name)):
             if call in FEED_WORDS or call in BARE_STATION_STOP_WORDS:
                 continue
-            found = stations.find(call)
+            found = stations.find(call, f"DT{subchannel}" if subchannel else None)
+            if subchannel:
+                return found  # the named sub-channel or nothing - never the main feed's (other network's) guide
             if found and found.endswith(".us_locals1"):
                 return found
     return None

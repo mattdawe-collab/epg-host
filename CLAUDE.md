@@ -44,7 +44,8 @@ Run everything from the repo root (`C:\Users\Admin\Documents\AI_EPG_Bridge`), on
 
 ### How to decide
 - **Region:** US channels take IDs ending in `.us`, `.us2`, `.us_locals1` and so on. Canadian channels take `.ca` and UK channels `.uk`.
-- **Call signs win:** "ABC (WABC)" gets the WABC ID, not a generic ABC.
+- **Call signs win:** "ABC (WABC)" gets the WABC ID, not a generic ABC. The nightly build already matches callsigns automatically. The queue holds the locals with no callsign in the name, like "US: ABC 3 HD [PENSACOLA]"; use your knowledge of US TV markets to find the station (WEAR) and `search` for it.
+- **Sub-channels:** when the network is on a station's second channel (NBC on WPTA-DT2 in Fort Wayne), pick the `-DT2` ID.
 - **Same network only:** a FOX channel never gets a CBS, NBC or ABC affiliate.
 - **Exact content:** "Discovery" is not "Discovery Science", "AMC" is not "AMC+", and "Sportsnet Ontario" is not "Sportsnet West".
 - **Feeds:** "West" and "Pacific" are the same feed. "East" is the default.

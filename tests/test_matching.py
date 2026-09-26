@@ -309,3 +309,10 @@ def test_station_matches_win_over_legacy_and_auto():
                            legacy={"US| FOX 17 (WZTV) NASHVILLE HD": "WZTV-DT2.us_locals1"})
     assert res.matches == {"US: FOX 17 (WZTV) NASHVILLE HD": "WZTV-DT.us_locals1"}
     assert res.how == {"US: FOX 17 (WZTV) NASHVILLE HD": "station"}
+
+
+def test_bare_callsign_with_a_subchannel_suffix_needs_that_subchannel():
+    ids = {"KMOV-DT.us_locals1"}
+    assert matching.station_match("TV: ST. LOUIS, MO KMOV-D2 ABC 30 A3 HD", matching.Stations(ids)) is None
+    ids = {"KMOV-DT.us_locals1", "KMOV-DT2.us_locals1"}
+    assert matching.station_match("TV: ST. LOUIS, MO KMOV-D2 ABC 30 A3 HD", matching.Stations(ids)) == "KMOV-DT2.us_locals1"

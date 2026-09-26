@@ -146,6 +146,15 @@ After the first fixes, automatic matches were 79% correct and carried-over match
 - **Gemini-era (legacy) matches** must also *resemble* the guide. That means a shared callsign, an equal name once spaces are removed ("RDS 2" ~ "RDS2 HD"), or a shared real word. Accents are folded (Évasion ~ Evasion).
 - **Build after these changes:** 777 automatic, 1,770 carried, 1,183 auto no-guide, 5,156 queued. Coverage 33.1%, fresh 95.3%.
 
+## Local affiliates by callsign (user report, 2026-09-26)
+
+The user saw many local ABC/FOX/NBC/CBS affiliates missing: only 245 of about 2,170 had a guide. Most names carry the station's callsign, like "US: FOX 17 (WZTV) NASHVILLE HD", and the guide has that station as `WZTV-DT.us_locals1`. The strict name matcher never used the callsign. New rule, placed right after the no-guide checks:
+
+- **A callsign in brackets** matches the station's main feed. That's `-DT`, preferring the US-locals source over `-LD`/`-CD` or the `.ca2` copies. A requested sub-channel such as `(WGBC-DT2)` gets exactly that sub-channel. Three-letter callsigns like (WWL) count.
+- **A bare callsign** (4 letters, K/W) is used only when the name also has a network word (ABC, CBS, NBC, FOX, CW, PBS, ION, Telemundo...) and the station is in the US-locals source. `KMOV-D2` needs `KMOV-DT2`, or it stays unmatched.
+- **Result:** local-network channels with a guide went from 245 to 1,398. The guide grew to 3,775 channels; coverage is 49%, fresh 96%. Audit: 58 of 60 station matches correct.
+- **Known limit:** when the network sits on a sub-channel the name doesn't mention ("NBC 21 (WPTA)", where NBC is WPTA-DT2), the main feed is used. Audits and sessions fix these one by one.
+
 ## Scorecard (requested 2026-09-26)
 
 Every nightly run scores the guide. The scores go in `status.json`, the run summary and `score_history.json` on `main`. The history is carried forward from last night's copy, keeping 365 days.
