@@ -109,6 +109,32 @@ Some time after March, the provider switched from `US| CNN HD` to `US: CNN HD` a
 - **Rename carry-over, changed:** a new name inherits a saved match when it equals a vanished saved name once quality tags, punctuation and the group mapping above are ignored, and when all of those vanished names agree on one guide ID. *Every* quality copy of a channel ("US: CNN HD", "US: CNN 4K") inherits the match; they're the same channel.
 - **First build under the new names:** 3,420 carried, 394 automatic, 5,072 queued. Coverage 42.9%, fresh 91.6%. The old matches carry over nightly, and each session's `apply` saves them under the new names.
 
+## Accuracy fixes (after the first audit, 2026-09-26)
+
+An independent audit of random samples found:
+- **Carried-over old matches: about 60% correct.** The Gemini-era saves were often wrong-country feeds.
+- **Automatic matches: about 52% correct.** They matched on generic words like "PPV" and "WEST", used +1 timeshift feeds, and took other countries' feeds for bare brand names.
+
+These changes followed:
+
+- **Trust order:**
+  1. Session decisions (`known_matches.json`) and matches confirmed in audits
+  2. `no_guide`
+  3. Automatic no-guide (PPV / EVENT / REPLAY / LOOP / 24/7 names)
+  4. Legacy matches (`legacy_matches.json`), exact or carried over, only if they pass `flag_reasons`
+  5. Strict automatic matching
+  6. The queue
+- **Strict automatic matching:**
+  - an exact name within the channel's country, or a plain-ratio (no partial matching) score of at least 93
+  - never a +1 feed for a non-timeshift channel
+  - never a generic word as the whole name
+  - never a match that fails `flag_reasons`
+  - "(WEST)" and "(EAST)" are feed words, not call signs
+- **Group regions:** `TV:` (formerly GO) has no single country.
+- **Carry-over:** `+` is kept, so AMC+ is not AMC. Decorations such as ᴿᴬᵂ and ◉ are removed properly.
+- **Coverage** is measured against channels that can have a guide: settled no-guide channels are left out.
+- **First build after the fixes:** 3,220 channels in the guide, 1,183 auto no-guide, 4,483 queued. Coverage 41.8%, fresh 93.3%, 0 flagged.
+
 ## Scorecard (requested 2026-09-26)
 
 Every nightly run scores the guide. The scores go in `status.json`, the run summary and `score_history.json` on `main`. The history is carried forward from last night's copy, keeping 365 days.

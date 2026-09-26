@@ -47,7 +47,7 @@ def load_json(path, default):
 
 
 def get_channel_list(mode, known, previous_channels):
-    """Return (names, provider_ids, description, login_problem)."""
+    """Return (names, provider_ids, description, login_problem). `known` holds every saved name."""
     saved = [n for n in known if not n.startswith("#") and matching.is_priority_channel(n)]
     if mode == "known":
         return saved, {}, "saved matches", None
@@ -91,9 +91,10 @@ def write_step_summary(status, problems, login_problem):
         "",
         f"- Channel list: {status['channel_list']}",
         f"- Guide: {status['channels']:,} channels, {status['programmes']:,} programmes, {status['size_mb']} MB",
-        f"- Matched: {counts.get('known', 0):,} saved, {counts.get('carried', 0):,} renamed, "
-        f"{counts.get('auto', 0):,} automatic",
-        f"- Waiting for a Claude matching session: {counts.get('queued', 0):,} (no guide: {counts.get('no_guide', 0):,})",
+        f"- Matched: {counts.get('known', 0):,} saved, {counts.get('legacy', 0):,} legacy, "
+        f"{counts.get('carried', 0):,} renamed, {counts.get('auto', 0):,} automatic",
+        f"- Waiting for a Claude matching session: {counts.get('queued', 0):,} (no guide: "
+        f"{counts.get('no_guide', 0) + counts.get('no_guide_auto', 0):,})",
         f"- Added / removed since last night: {status['added_count']:,} / {status['removed_count']:,}",
         "- Sources: " + ", ".join(f"{k} {v}" for k, v in status["sources"].items()),
     ]
@@ -108,6 +109,7 @@ def main(argv=None):
     ui.banner("EPG BRIDGE")
 
     known = load_json(os.path.join(args.data_dir, "known_matches.json"), {})
+    legacy = load_json(os.path.join(args.data_dir, "legacy_matches.json"), {})
     no_guide = load_json(os.path.join(args.data_dir, "no_guide.json"), {})
     rejected = load_json(os.path.join(args.data_dir, "rejected_matches.json"), {})
     audit_log = load_json(os.path.join(args.data_dir, "audit_log.json"), [])
@@ -117,7 +119,7 @@ def main(argv=None):
     previous_history = load_json(prev and os.path.join(prev, "score_history.json"), [])
 
     ui.step(1, 5, "Channel list")
-    names, provider_ids, list_source, login_problem = get_channel_list(args.channels_from, known, previous_channels)
+    names, provider_ids, list_source, login_problem = get_channel_list(args.channels_from, {**legacy, **known}, previous_channels)
     unwritable = [n for n in names if NOT_XML_SAFE.search(n)]
     if unwritable:
         ui.warn(f"Skipping {len(unwritable)} channel name(s) with characters XML cannot hold")
@@ -133,7 +135,7 @@ def main(argv=None):
     ref = epg_cache.fetch_reference_data(epg_cache.SOURCES, args.cache_dir, args.cache_max_age)
 
     ui.step(3, 5, "Matching (no AI)")
-    result = matching.resolve(names, known, no_guide, ref.by_name, ref.valid_ids, provider_ids, rejected)
+    result = matching.resolve(names, known, no_guide, ref.by_name, ref.valid_ids, provider_ids, rejected, legacy)
     ui.info(", ".join(f"{k}: {v:,}" for k, v in sorted(result.counts.items())))
 
     ui.step(4, 5, "Building guide")
@@ -147,7 +149,8 @@ def main(argv=None):
         stats = guide.write_guide(build_path, result.matches, ref.paths, now, days_ahead=days)
         size = os.path.getsize(build_path)
 
-    card = score.scorecard(len(names), result.matches, stats, audit_log)
+    settled = result.counts["no_guide"] + result.counts["no_guide_auto"]
+    card = score.scorecard(len(names), result.matches, stats, audit_log, settled_no_guide=settled)
     history = score.update_history(previous_history, now.date().isoformat(), card)
     previous_names = set(previous_channels or [])
     added = sorted(set(names) - previous_names) if previous_channels else []

@@ -61,7 +61,7 @@ def test_new_colon_naming_is_recognised():
     assert matching.extract_core_name("CA EN: CTV (CFTO) TORONTO") == "CFTO"
     assert matching.normalize_name("US: CNN HD") == matching.normalize_name("US| CNN FHD")
     assert [matching.region_of(n) for n in ("US: CNN", "AT&T: AMC", "TV: FOX", "CA FR: TVA", "NOW: SKY", "PRIME: X")] == \
-        ["US", "US", "US", "CA", "UK", "ALL"]
+        ["US", "US", "ALL", "CA", "UK", "ALL"]
 
 
 def test_carry_over_follows_regrouped_channels():
@@ -136,3 +136,62 @@ def test_queue_entry_has_candidates_and_only_valid_provider_hints():
 def test_candidates_are_capped():
     pools = matching.Pools({f"CNN {i}": f"CNN{i}.us" for i in range(30)})
     assert len(pools.candidates("US", "US| CNN", limit=10)) == 10
+
+
+def test_plus_services_are_not_quality_copies():
+    renames = matching.carry_over_renames(["UK: AMC FHD", "UK: AMC + 4K"], {"UK| AMC HD": "AMC.uk"})
+    assert {n: r["id"] for n, r in renames.items()} == {"UK: AMC FHD": "AMC.uk"}
+
+
+def test_decorations_are_ignored():
+    assert matching.normalize_name("US: AMC ᴿᴬᵂ") == matching.normalize_name("US| AMC")
+    assert matching.extract_core_name("US: AMC ᴿᴬᵂ") == "AMC"
+    assert matching.extract_core_name("4K: V SPORT ᵁᴴᴰ ³⁸⁴⁰ᴾ") == "V SPORT"
+    assert matching.extract_core_name("UK: DISCOVERY 4K ◉") == "DISCOVERY"
+
+
+def test_feed_words_are_not_callsigns():
+    assert matching.extract_core_name("US: NBC SYFY (WEST)") == "NBC SYFY"
+
+
+def auto(name, by_name):
+    return matching.quick_match(name, by_name, matching.Pools(by_name))
+
+
+def test_auto_match_stays_in_the_channel_country():
+    assert auto("UK: DISNEY JUNIOR 4K", {"DISNEY JUNIOR": "DISNEY.JUNIOR.co"}) is None
+    assert auto("UK: DISNEY JUNIOR 4K", {"DISNEY JUNIOR": "DISNEY.JUNIOR.co", "Disney Junior": "DisneyJunior.uk"}) == "DisneyJunior.uk"
+
+
+def test_auto_match_needs_near_identical_names():
+    assert auto("US: LUCIFER ᴿᴬᵂ", {"WLUC-DT": "WLUC-DT.us_locals1"}) is None
+    assert auto("US: NBC SYFY (WEST)", {"WEST": "WEST.gr", "KWES": "KWES.us"}) is None
+
+
+def test_auto_match_never_uses_a_timeshift_feed():
+    assert auto("UK: DISCOVERY 4K", {"Discovery+1": "Discovery+1.uk"}) is None
+    assert auto("UK: DISCOVERY 4K", {"Discovery+1": "Discovery+1.uk", "Discovery": "Discovery.uk"}) == "Discovery.uk"
+
+
+def test_event_and_loop_channels_get_no_guide_automatically():
+    res = matching.resolve(["CA: DAZN 16 PPV", "US: 24/7 SIMPSONS"], {}, {}, {"PPV": "PPV.ca2"}, {"PPV.ca2"})
+    assert res.matches == {} and res.queue == []
+    assert res.counts["no_guide_auto"] == 2
+
+
+def test_flagged_legacy_matches_are_not_trusted():
+    legacy = {"US| HGTV HD": "HGTV.za", "US| CNN HD": "CNN.us"}
+    res = matching.resolve(["US: HGTV HD", "US: CNN HD"], {}, {}, {"Other": "Other.us"}, {"HGTV.za", "CNN.us", "Other.us"},
+                           legacy=legacy)
+    assert res.matches == {"US: CNN HD": "CNN.us"}
+    assert res.how == {"US: CNN HD": "renamed"}
+    assert res.queue[0]["name"] == "US: HGTV HD" and res.queue[0]["previous_id"] == "HGTV.za"
+
+
+def test_session_decisions_are_trusted_even_when_flagged():
+    res = matching.resolve(["US: HGTV HD"], {"US: HGTV HD": "HGTV.za"}, {}, {}, {"HGTV.za"})
+    assert res.matches == {"US: HGTV HD": "HGTV.za"} and res.how == {"US: HGTV HD": "saved"}
+
+
+def test_flag_reasons_live_in_matching():
+    assert matching.flag_reasons("US| CNN", "CNN.uk") == ["region"]

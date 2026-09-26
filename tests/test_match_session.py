@@ -10,15 +10,14 @@ def test_apply_decisions():
     no_guide = {"US| X": "2026-01-01"}
     decisions = {"US| CNN": "CNN.us", "US| PPV 1": "NO_GUIDE", "US| MAYBE": "SKIP", "US| BAD": "NotReal.us",
                  "US| X": "ESPN.us", "US| TYPO": "CNN.us"}
-    carried = {"US| NEW NAME": {"from": "US| OLD NAME", "id": "ESPN.us"}}
-    channel_names = {"US| CNN", "US| PPV 1", "US| MAYBE", "US| BAD", "US| X", "US| NEW NAME"}
-    applied, problems = ms.apply_decisions(decisions, {"CNN.us", "ESPN.us"}, known, no_guide, carried, "2026-09-26",
+    channel_names = {"US| CNN", "US| PPV 1", "US| MAYBE", "US| BAD", "US| X"}
+    applied, problems = ms.apply_decisions(decisions, {"CNN.us", "ESPN.us"}, known, no_guide, "2026-09-26",
                                            channel_names)
-    assert known == {"US| OLD": "Old.us", "US| NEW NAME": "ESPN.us", "US| CNN": "CNN.us", "US| X": "ESPN.us"}
+    assert known == {"US| OLD": "Old.us", "US| CNN": "CNN.us", "US| X": "ESPN.us"}
     assert no_guide == {"US| PPV 1": "2026-09-26"}
     assert problems == {"US| BAD": "NotReal.us is not a real guide ID",
                         "US| TYPO": "not a channel in tonight's list"}
-    assert applied == {"matched": 2, "no_guide": 1, "carried": 1, "skipped": 1}
+    assert applied == {"matched": 2, "no_guide": 1, "skipped": 1}
 
 
 def test_pending_hides_decided_channels():
@@ -73,19 +72,19 @@ def test_audit_skips_flagged_matches_already_confirmed():
 
 def test_apply_verdicts():
     sample = {
-        "US| A": {"id": "A.us", "how": "saved", "flags": [], "sample": "random"},
+        "US| A": {"id": "A.us", "how": "auto", "flags": [], "sample": "random"},
         "US| B": {"id": "B.uk", "how": "auto", "flags": ["region"], "sample": "flagged"},
         "US| C": {"id": "C.us", "how": "saved", "flags": [], "sample": "random"},
         "US| D": {"id": "D.us", "how": "renamed", "flags": [], "sample": "random"},
         "US| E": {"id": "E.us", "how": "saved", "flags": [], "sample": "random"},
     }
-    known = {"US| A": "A.us", "US| C": "C.us", "US| E": "E.us"}
+    known = {"US| C": "C.us", "US| E": "E.us"}
     no_guide, rejected, log = {}, {}, []
     verdicts = {"US| A": "correct", "US| B": "B.us", "US| C": "wrong", "US| D": "NO_GUIDE", "US| E": "Fake.us",
                 "US| Z": "correct"}
     counts, problems = ms.apply_verdicts(verdicts, sample, {"A.us", "B.us", "C.us", "D.us", "E.us"},
                                          known, no_guide, rejected, log, "2026-09-26")
-    assert known == {"US| A": "A.us", "US| E": "E.us", "US| B": "B.us"}
+    assert known == {"US| A": "A.us", "US| E": "E.us", "US| B": "B.us"}  # "correct" pins the audited match
     assert no_guide == {"US| D": "2026-09-26"}
     assert rejected == {"US| B": ["B.uk"], "US| C": ["C.us"], "US| D": ["D.us"]}
     assert [(e["name"], e["verdict"], e["sample"]) for e in log] == [

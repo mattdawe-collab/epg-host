@@ -54,3 +54,9 @@ def test_update_history_replaces_same_day_and_caps_length():
     updated = score.update_history(history + [{"date": "2026-09-26", "headline": 0.1}], "2026-09-26", card)
     assert len(updated) == score.HISTORY_DAYS
     assert updated[-1] == {"date": "2026-09-26", **card}
+
+
+def test_coverage_leaves_out_channels_settled_as_no_guide():
+    stats = GuideStats(channels=3, programmes=10, channels_with_upcoming=3, skipped_duplicates=0, skipped_out_of_window=0)
+    card = score.scorecard(10, {"US| A": "A.us", "US| B": "B.us", "US| C": "C.us"}, stats, [], settled_no_guide=4)
+    assert card["coverage"] == 0.5

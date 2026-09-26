@@ -7,10 +7,11 @@ import gzip
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 from datetime import date
+
+from matching import NO_GUIDE_PATTERN
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KNOWN_FILE = os.path.join(ROOT, "data", "known_matches.json")
@@ -18,7 +19,6 @@ NO_GUIDE_FILE = os.path.join(ROOT, "data", "no_guide.json")
 REJECTED_FILE = os.path.join(ROOT, "data", "rejected_matches.json")
 AUDIT_LOG_FILE = os.path.join(ROOT, "data", "audit_log.json")
 AUDIT_SAMPLE_FILE = os.path.join(ROOT, "audit_sample.json")
-NO_GUIDE_PATTERN = re.compile(r"\b(PPV|EVENTS?|REPLAY|LOOP)\b|\b24/7\b", re.IGNORECASE)
 
 
 def load_json(path, default):
@@ -50,13 +50,9 @@ def pending(queue_doc, known, no_guide):
     return [e for e in queue_doc.get("queue", []) if e["name"] not in known and e["name"] not in no_guide]
 
 
-def apply_decisions(decisions, index_ids, known, no_guide, carried, today, channel_names):
-    applied = {"matched": 0, "no_guide": 0, "carried": 0, "skipped": 0}
+def apply_decisions(decisions, index_ids, known, no_guide, today, channel_names):
+    applied = {"matched": 0, "no_guide": 0, "skipped": 0}
     problems = {}
-    for name, entry in carried.items():
-        if name not in known and entry["id"] in index_ids:
-            known[name] = entry["id"]
-            applied["carried"] += 1
     for name, decision in decisions.items():
         if name not in channel_names:
             problems[name] = "not a channel in tonight's list"
@@ -116,6 +112,7 @@ def apply_verdicts(verdicts, sample, index_ids, known, no_guide, rejected, audit
         audit_log.append({"date": today, "name": name, "id": info["id"], "how": info["how"],
                           "sample": info["sample"], "verdict": "correct" if verdict == "correct" else "wrong"})
         if verdict == "correct":
+            known[name] = info["id"]  # a confirmed match becomes a trusted session decision
             counts["correct"] += 1
             continue
         refused = rejected.setdefault(name, [])
@@ -169,7 +166,7 @@ def cmd_apply(args):
     channel_names = set(load_published("channels.json", args.source)) | {e["name"] for e in queue_doc.get("queue", [])}
     known, no_guide = load_json(KNOWN_FILE, {}), load_json(NO_GUIDE_FILE, {})
     applied, problems = apply_decisions(load_json(args.decisions, {}), index_ids, known, no_guide,
-                                        queue_doc.get("carried", {}), date.today().isoformat(), channel_names)
+                                        date.today().isoformat(), channel_names)
     save_json(KNOWN_FILE, known)
     save_json(NO_GUIDE_FILE, no_guide)
     print("Applied:", applied)

@@ -13,6 +13,12 @@ This project builds the TV guide (XMLTV) that TiviMate uses for the user's IPTV 
   - `match_queue.json`: channels waiting to be matched
   - `score_history.json`: the scorecard over time
 
+## Data files (on `code`)
+- `data/known_matches.json`: trusted decisions from Claude sessions, including matches confirmed in audits. They always win.
+- `data/legacy_matches.json`: old Gemini-era matches, keyed by the provider's old `|` names. Audits found about 40% of them wrong. They're used, or carried over to the new names, only when they pass the free checks (country, callsign, network).
+- `data/no_guide.json`, `data/rejected_matches.json` and `data/audit_log.json`: session decisions and the audit history that drives the Accuracy score.
+- Pay-per-view, event, replay, loop and 24/7 channels are settled as "no guide" automatically and left out of coverage.
+
 ## Hard rules
 - No AI or LLM API calls in this project: not Gemini, OpenAI, Anthropic or anything else. It was shut down once for burning API credits. You do the matching and auditing yourself, in the session.
 - Never type, paste or store the IPTV password. If the login changes, the user runs `venv\Scripts\python tools\set_login.py`.
@@ -25,7 +31,9 @@ Run everything from the repo root (`C:\Users\Admin\Documents\AI_EPG_Bridge`), on
 ### 1. Audit first (every session)
 1. `venv\Scripts\python src\match_session.py audit` shows 25 of tonight's matches. Up to half are flagged matches; the rest are a random sample.
 2. Write `verdicts.json` in the form `{"<exact channel name>": "correct" | "wrong" | "NO_GUIDE" | "<right guide ID>"}`.
-3. `venv\Scripts\python src\match_session.py audit-apply verdicts.json` records the verdicts, which drive the Accuracy score. It also fixes or removes wrong matches. The automatic rules never pick a rejected pair again.
+3. `venv\Scripts\python src\match_session.py audit-apply verdicts.json` records the verdicts, which drive the Accuracy score.
+   - `correct` saves the match to `known_matches.json` as trusted.
+   - `wrong` or `NO_GUIDE` rejects the pair; the automatic rules never pick it again.
 
 ### 2. Match the queue
 1. `venv\Scripts\python src\match_session.py show` lists the next 50 channels waiting, each with its guide candidates (`ID -- display name`). Add `--offset 50` for the next page.
@@ -42,6 +50,8 @@ Run everything from the repo root (`C:\Users\Admin\Documents\AI_EPG_Bridge`), on
 - **Feeds:** "West" and "Pacific" are the same feed. "East" is the default.
 - **No guide:** pay-per-view, event, replay and 24/7 loop channels are `NO_GUIDE`.
 - **Unsure:** use `SKIP`, which leaves the channel queued. A wrong guide is worse than none.
+
+A queue entry with `reason: unverified_legacy` had an old Gemini match that failed the checks. Its `previous_id` is that old guess, and it is usually a wrong-country feed.
 
 If `show` says a source failed that night, leave that night's `vanished_id` entries alone. They clear once the source is back.
 
