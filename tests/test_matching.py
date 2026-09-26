@@ -56,6 +56,13 @@ def test_carry_over_handles_duplicate_names_in_list():
         "US| CNN FHD": {"from": "US| CNN HD", "id": "CNN.us"}}
 
 
+def test_carry_over_works_again_after_an_earlier_rename():
+    known = {"US| CNN HD": "CNN.us", "US| CNN FHD": "CNN.us"}
+    renames = matching.carry_over_renames(["US| CNN ᴴᴰ"], known)
+    assert renames["US| CNN ᴴᴰ"]["id"] == "CNN.us"
+    assert renames["US| CNN ᴴᴰ"]["from"] in known
+
+
 def test_resolve_order():
     known = {"US| CNN HD": "CNN.us", "US| OLD NAME HD": "ESPN.us", "US| GONE": "Missing.us"}
     no_guide = {"US| PPV EVENT 1": "2026-09-26"}

@@ -9,12 +9,15 @@ def test_apply_decisions():
     known = {"US| OLD": "Old.us"}
     no_guide = {"US| X": "2026-01-01"}
     decisions = {"US| CNN": "CNN.us", "US| PPV 1": "NO_GUIDE", "US| MAYBE": "SKIP", "US| BAD": "NotReal.us",
-                 "US| X": "ESPN.us"}
+                 "US| X": "ESPN.us", "US| TYPO": "CNN.us"}
     carried = {"US| NEW NAME": {"from": "US| OLD NAME", "id": "ESPN.us"}}
-    applied, rejected = ms.apply_decisions(decisions, {"CNN.us", "ESPN.us"}, known, no_guide, carried, "2026-09-26")
+    channel_names = {"US| CNN", "US| PPV 1", "US| MAYBE", "US| BAD", "US| X", "US| NEW NAME"}
+    applied, problems = ms.apply_decisions(decisions, {"CNN.us", "ESPN.us"}, known, no_guide, carried, "2026-09-26",
+                                           channel_names)
     assert known == {"US| OLD": "Old.us", "US| NEW NAME": "ESPN.us", "US| CNN": "CNN.us", "US| X": "ESPN.us"}
     assert no_guide == {"US| PPV 1": "2026-09-26"}
-    assert rejected == {"US| BAD": "NotReal.us"}
+    assert problems == {"US| BAD": "NotReal.us is not a real guide ID",
+                        "US| TYPO": "not a channel in tonight's list"}
     assert applied == {"matched": 2, "no_guide": 1, "carried": 1, "skipped": 1}
 
 
@@ -52,13 +55,20 @@ def test_audit_sample_mixes_flagged_and_random():
     sample = ms.pick_audit_sample(matches, [], size=10, rng=random.Random(1))
     kinds = [v["sample"] for v in sample.values()]
     assert len(sample) == 10 and kinds.count("flagged") == 5 and kinds.count("random") == 5
-    assert all(not v["flags"] for v in sample.values() if v["sample"] == "random")
+
+
+def test_random_audits_can_include_flagged_matches():
+    matches = {f"US| BAD{i}": {"id": f"B{i}.uk", "how": "auto", "flags": ["region"]} for i in range(10)}
+    sample = ms.pick_audit_sample(matches, [], size=4, rng=random.Random(1))
+    kinds = [v["sample"] for v in sample.values()]
+    assert kinds.count("flagged") == 2 and kinds.count("random") == 2
 
 
 def test_audit_skips_flagged_matches_already_confirmed():
     matches = {"US| A": {"id": "A.uk", "how": "saved", "flags": ["region"]}}
     log = [{"name": "US| A", "id": "A.uk", "verdict": "correct", "sample": "flagged"}]
-    assert ms.pick_audit_sample(matches, log, size=2, rng=random.Random(1)) == {}
+    sample = ms.pick_audit_sample(matches, log, size=2, rng=random.Random(1))
+    assert [v["sample"] for v in sample.values()] == ["random"]
 
 
 def test_apply_verdicts():
@@ -89,6 +99,7 @@ def test_apply_command_end_to_end(tmp_path, monkeypatch):
     published = tmp_path / "publish"
     published.mkdir()
     (published / "match_queue.json").write_text(json.dumps({"queue": [], "carried": {}}), encoding="utf-8")
+    (published / "channels.json").write_text(json.dumps(["US| CNN"]), encoding="utf-8")
     with gzip.open(published / "guide_index.json.gz", "wt", encoding="utf-8") as f:
         json.dump({"CNN.us": ["CNN"]}, f)
     monkeypatch.setattr(ms, "KNOWN_FILE", str(tmp_path / "known.json"))

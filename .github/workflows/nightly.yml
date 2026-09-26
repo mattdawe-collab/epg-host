@@ -88,8 +88,8 @@ jobs:
           git commit -q -m "Guide $(date -u +%Y-%m-%d)"
           git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
 
-      - name: Fail loudly about the login
+      - name: Fail loudly about the channel list
         if: steps.build.outputs.exit_code == '3'
         run: |
-          echo "::error::The provider rejected the IPTV login (or it isn't set). Run tools/set_login.py on the PC."
+          echo "::error::The guide was published from a fallback channel list (login rejected or missing, no channels returned, or several stale nights) - see the run summary. If the login changed, run tools/set_login.py on the PC."
           exit 1

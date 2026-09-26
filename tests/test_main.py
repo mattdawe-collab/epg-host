@@ -63,6 +63,42 @@ def test_provider_mode_carries_renames_and_queues_new_channels(env, monkeypatch)
     assert queue["carried"]["US| CNN FHD"]["id"] == "CNN.us"
     assert published(env, "channels.json") == ["US| CNN FHD", "US| MYSTERY"]
     assert published(env, "status.json")["score"]["coverage"] == 0.5
+    assert published(env, "status.json")["stale_nights"] == 0
+
+
+def test_provider_returning_no_channels_uses_fallback_and_returns_3(env, monkeypatch):
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    write_data(env, {"US| CNN HD": "CNN.us"})
+    monkeypatch.setattr(main.provider, "fetch_channels", lambda *a, **k: [])
+    assert run(env) == 3
+    assert published(env, "status.json")["channel_list"] == "saved matches (provider returned no channels)"
+
+
+def test_stale_channel_list_escalates_after_three_nights(env, monkeypatch):
+    write_data(env, {"US| CNN HD": "CNN.us"})
+
+    def down(*a, **k):
+        raise provider.ProviderUnavailable("HTTP 403")
+
+    monkeypatch.setattr(main.provider, "fetch_channels", down)
+    previous = env / "previous"
+    previous.mkdir()
+    (previous / "channels.json").write_text(json.dumps(["US| CNN HD"]), encoding="utf-8")
+    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 1}), encoding="utf-8")
+    assert run(env, "--previous-dir", str(previous)) == 0
+    assert published(env, "status.json")["stale_nights"] == 2
+    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 2}), encoding="utf-8")
+    assert run(env, "--previous-dir", str(previous)) == 3
+    assert published(env, "status.json")["stale_nights"] == 3
+
+
+def test_names_that_cannot_be_written_to_xml_are_dropped(env, monkeypatch):
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    write_data(env, {"US| CNN HD": "CNN.us", "US| BAD\x01NAME": "ESPN.us"})
+    monkeypatch.setattr(main.provider, "fetch_channels", lambda *a, **k: [
+        {"name": "US| CNN HD", "epg_id": None}, {"name": "US| BAD\x01NAME", "epg_id": None}])
+    assert run(env) == 0
+    assert published(env, "channels.json") == ["US| CNN HD"]
 
 
 def test_rejected_login_publishes_last_nights_list_and_returns_3(env, monkeypatch):

@@ -1,11 +1,12 @@
 """Nightly EPG build: channel list -> matches (no AI) -> guide -> checks -> scorecard -> publish folder.
 
-Exit codes: 0 published; 2 checks failed, nothing published; 3 published from a fallback channel
-list because the IPTV login was rejected or is not configured.
+Exit codes: 0 published; 2 checks failed, nothing published; 3 published, but from a fallback channel
+list that needs attention (login rejected or missing, no channels returned, or stale for several nights).
 """
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -21,7 +22,9 @@ import score
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRIM_DAYS = 5.0
+STALE_NIGHTS_LIMIT = 3
 LOGIN_HELP = "run tools/set_login.py on the PC"
+NOT_XML_SAFE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 
 
 def parse_args(argv):
@@ -63,6 +66,9 @@ def get_channel_list(mode, known, previous_channels):
         ui.warn(f"Provider unavailable ({e}) - using {label}")
         return fallback, {}, f"{label} (provider unavailable)", None
     names = [c["name"] for c in channels if matching.is_priority_channel(c["name"])]
+    if not names:
+        return fallback, {}, f"{label} (provider returned no channels)", (
+            f"The provider returned no channels - the account may have expired. Check it, then {LOGIN_HELP}.")
     return names, {c["name"]: c["epg_id"] for c in channels if c["epg_id"]}, "provider", None
 
 
@@ -112,8 +118,16 @@ def main(argv=None):
 
     ui.step(1, 5, "Channel list")
     names, provider_ids, list_source, login_problem = get_channel_list(args.channels_from, known, previous_channels)
-    names = list(dict.fromkeys(names))
+    unwritable = [n for n in names if NOT_XML_SAFE.search(n)]
+    if unwritable:
+        ui.warn(f"Skipping {len(unwritable)} channel name(s) with characters XML cannot hold")
+    names = [n for n in dict.fromkeys(names) if not NOT_XML_SAFE.search(n)]
     ui.info(f"{len(names):,} channels from {list_source}")
+    stale = args.channels_from == "provider" and list_source != "provider"
+    stale_nights = previous_status.get("stale_nights", 0) + 1 if stale else 0
+    if stale_nights >= STALE_NIGHTS_LIMIT and not login_problem:
+        login_problem = (f"The channel list has not been refreshed for {stale_nights} nights ({list_source}). "
+                         f"If the same login works on the PC, the provider may be blocking GitHub.")
 
     ui.step(2, 5, "Guide sources")
     ref = epg_cache.fetch_reference_data(epg_cache.SOURCES, args.cache_dir, args.cache_max_age)
@@ -141,6 +155,7 @@ def main(argv=None):
     status = {
         "generated_at": now.isoformat(timespec="seconds"),
         "channel_list": list_source,
+        "stale_nights": stale_nights,
         "channels": stats.channels,
         "programmes": stats.programmes,
         "channels_with_upcoming": stats.channels_with_upcoming,

@@ -50,15 +50,17 @@ def pending(queue_doc, known, no_guide):
     return [e for e in queue_doc.get("queue", []) if e["name"] not in known and e["name"] not in no_guide]
 
 
-def apply_decisions(decisions, index_ids, known, no_guide, carried, today):
+def apply_decisions(decisions, index_ids, known, no_guide, carried, today, channel_names):
     applied = {"matched": 0, "no_guide": 0, "carried": 0, "skipped": 0}
-    rejected = {}
+    problems = {}
     for name, entry in carried.items():
         if name not in known and entry["id"] in index_ids:
             known[name] = entry["id"]
             applied["carried"] += 1
     for name, decision in decisions.items():
-        if decision == "SKIP":
+        if name not in channel_names:
+            problems[name] = "not a channel in tonight's list"
+        elif decision == "SKIP":
             applied["skipped"] += 1
         elif decision == "NO_GUIDE":
             no_guide[name] = today
@@ -69,8 +71,8 @@ def apply_decisions(decisions, index_ids, known, no_guide, carried, today):
             no_guide.pop(name, None)
             applied["matched"] += 1
         else:
-            rejected[name] = decision
-    return applied, rejected
+            problems[name] = f"{decision} is not a real guide ID"
+    return applied, problems
 
 
 def build_prepass(queue_doc, suggestions, index_ids):
@@ -85,15 +87,18 @@ def build_prepass(queue_doc, suggestions, index_ids):
 
 
 def pick_audit_sample(matches_doc, audit_log, size=25, rng=None):
-    """Up to half flagged matches (not already confirmed), the rest a random sample of unflagged matches."""
+    """Up to half flagged matches (not already confirmed); the rest a random sample of ALL other matches,
+    so the random audits - which drive Accuracy - represent flagged and unflagged matches alike."""
     rng = rng or random.Random()
     confirmed = {(e["name"], e["id"]) for e in audit_log if e["verdict"] == "correct"}
     flagged = [(n, m) for n, m in sorted(matches_doc.items()) if m.get("flags") and (n, m["id"]) not in confirmed]
     flagged = flagged[: size // 2]
-    others = [(n, m) for n, m in sorted(matches_doc.items()) if not m.get("flags")]
+    chosen = {n for n, _ in flagged}
+    others = [(n, m) for n, m in sorted(matches_doc.items()) if n not in chosen]
     randoms = rng.sample(others, min(size - len(flagged), len(others)))
     sample = {n: {"id": m["id"], "how": m["how"], "flags": m["flags"], "sample": "flagged"} for n, m in flagged}
-    sample.update({n: {"id": m["id"], "how": m["how"], "flags": [], "sample": "random"} for n, m in randoms})
+    sample.update({n: {"id": m["id"], "how": m["how"], "flags": m.get("flags", []), "sample": "random"}
+                   for n, m in randoms})
     return sample
 
 
@@ -160,16 +165,17 @@ def cmd_search(args):
 
 def cmd_apply(args):
     index_ids = set(load_published("guide_index.json.gz", args.source))
-    carried = load_published("match_queue.json", args.source).get("carried", {})
+    queue_doc = load_published("match_queue.json", args.source)
+    channel_names = set(load_published("channels.json", args.source)) | {e["name"] for e in queue_doc.get("queue", [])}
     known, no_guide = load_json(KNOWN_FILE, {}), load_json(NO_GUIDE_FILE, {})
-    applied, rejected = apply_decisions(load_json(args.decisions, {}), index_ids, known, no_guide, carried,
-                                        date.today().isoformat())
+    applied, problems = apply_decisions(load_json(args.decisions, {}), index_ids, known, no_guide,
+                                        queue_doc.get("carried", {}), date.today().isoformat(), channel_names)
     save_json(KNOWN_FILE, known)
     save_json(NO_GUIDE_FILE, no_guide)
     print("Applied:", applied)
-    for name, value in rejected.items():
-        print(f"REJECTED (not a real guide ID): {name} -> {value}")
-    return 1 if rejected else 0
+    for name, problem in problems.items():
+        print(f"REJECTED: {name}: {problem}")
+    return 1 if problems else 0
 
 
 def cmd_prepass(args):

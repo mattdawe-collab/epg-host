@@ -125,8 +125,9 @@ def carry_over_renames(current_names, known):
             new[normalize_name(name)].append(name)
     renames = {}
     for key, olds in vanished.items():
-        if len(olds) == 1 and len(new.get(key, [])) == 1:
-            renames[new[key][0]] = {"from": olds[0], "id": known[olds[0]]}
+        # Earlier renames leave old names behind; they are unambiguous as long as they agree on the ID.
+        if len({known[o] for o in olds}) == 1 and len(new.get(key, [])) == 1:
+            renames[new[key][0]] = {"from": olds[-1], "id": known[olds[0]]}
     return renames
 
 
