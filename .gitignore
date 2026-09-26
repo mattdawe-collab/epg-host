@@ -2,18 +2,24 @@
 venv/
 venv_nas/
 __pycache__/
+.pytest_cache/
 
-# Logs (except missing_channels.txt which is tracked)
+# Generated locally or by the nightly job (published on the main branch)
+publish/
+previous/
+data/cache/
+logs/
 *.log
-logs/install_check.lock
-logs/full_run_log.txt
-
-# Cache directories
-**/cache/
-
-# Large uncompressed EPG (use .gz instead)
 epg.xml
+epg*.xml.gz
+data/epg_repair.xml
+data/epg_repair.xml.gz
+data/playlist_cache.json
 
-# Junk files
+# Matching-session scratch files
+suggested_matches.json
+decisions*.json
+verdicts*.json
+audit_sample.json
+
 *.zip
-src/New Text Document.txt
