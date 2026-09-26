@@ -1,0 +1,95 @@
+name: Nightly guide
+
+on:
+  schedule:
+    - cron: "0 9 * * *"  # 3 AM MDT / 2 AM MST
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to main (leave unticked for a test run)"
+        type: boolean
+        default: false
+  push:
+    branches: [code]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - ".github/workflows/nightly.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-guide
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PUBLISH: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Unit tests
+        run: python -m pytest -q
+
+      - name: Get last night's published files
+        run: |
+          mkdir -p previous
+          if git fetch -q --depth=1 origin main; then
+            for f in channels.json status.json score_history.json; do
+              git show "FETCH_HEAD:$f" > "previous/$f" 2>/dev/null || rm -f "previous/$f"
+            done
+          fi
+
+      - name: Build guide
+        id: build
+        env:
+          XC_URL: ${{ secrets.XC_URL }}
+          XC_USERNAME: ${{ secrets.XC_USERNAME }}
+          XC_PASSWORD: ${{ secrets.XC_PASSWORD }}
+        run: |
+          set +e
+          python -u src/main.py --previous-dir previous --publish-dir publish
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then exit "$code"; fi
+
+      - name: Keep test build
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: guide-test-build
+          path: publish/
+          retention-days: 3
+
+      - name: Publish to main
+        if: env.PUBLISH == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd publish
+          git init -q -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Guide $(date -u +%Y-%m-%d)"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+
+      - name: Fail loudly about the login
+        if: steps.build.outputs.exit_code == '3'
+        run: |
+          echo "::error::The provider rejected the IPTV login (or it isn't set). Run tools/set_login.py on the PC."
+          exit 1
