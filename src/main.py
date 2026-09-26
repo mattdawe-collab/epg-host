@@ -137,7 +137,7 @@ def main(argv=None):
 
     ui.step(3, 5, "Matching (no AI)")
     result = matching.resolve(names, known, no_guide, ref.by_name, ref.valid_ids, provider_ids, rejected, legacy,
-                              index=ref.index, expected=expected)
+                              index=ref.index, expected=expected, id_countries=ref.id_country)
     ui.info(", ".join(f"{k}: {v:,}" for k, v in sorted(result.counts.items())))
 
     ui.step(4, 5, "Building guide")
@@ -152,7 +152,8 @@ def main(argv=None):
         size = os.path.getsize(build_path)
 
     settled = result.counts["no_guide"] + result.counts["no_guide_auto"]
-    card = score.scorecard(len(names), result.matches, stats, audit_log, settled_no_guide=settled, expected=expected)
+    card = score.scorecard(len(names), result.matches, stats, audit_log, settled_no_guide=settled, expected=expected,
+                           id_countries=ref.id_country)
     history = score.update_history(previous_history, now.date().isoformat(), card)
     previous_names = set(previous_channels or [])
     added = sorted(set(names) - previous_names) if previous_channels else []

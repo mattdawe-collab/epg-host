@@ -20,6 +20,10 @@ SOURCES = [
 ]
 
 
+# Sources whose guide IDs are bare numbers (no country suffix); every channel in them is from one country.
+SOURCE_COUNTRIES = {"epg_uk_pw.xml.gz": "uk", "epg_canada_pw.xml.gz": "ca"}
+
+
 @dataclass
 class ReferenceData:
     by_name: dict = field(default_factory=dict)        # display name -> channel id (first source wins)
@@ -27,6 +31,7 @@ class ReferenceData:
     index: dict = field(default_factory=dict)          # channel id -> display names
     source_status: dict = field(default_factory=dict)  # filename -> downloaded | cached | stale cache | failed
     paths: list = field(default_factory=list)          # readable source files, in source order
+    id_country: dict = field(default_factory=dict)     # bare-number guide ID -> country of its source
 
 
 def get_cache_age_hours(path):
@@ -110,6 +115,10 @@ def fetch_reference_data(sources, cache_dir, cache_max_age_hours=24.0):
         for name, channel_id in by_name.items():
             ref.by_name.setdefault(name, channel_id)
         ref.valid_ids |= ids
+        if filename in SOURCE_COUNTRIES:
+            for channel_id in ids:
+                if "." not in channel_id:
+                    ref.id_country.setdefault(channel_id, SOURCE_COUNTRIES[filename])
         for channel_id, names in index.items():
             merged = ref.index.setdefault(channel_id, [])
             merged.extend(n for n in names if n not in merged)

@@ -116,12 +116,13 @@ def same_country(a, b):
     return a == b or {a, b} <= {"uk", "gb"}
 
 
-def flag_reasons(name, xml_id, expected_country=None):
+def flag_reasons(name, xml_id, expected_country=None, id_country=None):
     """Free checks for a probably-wrong match: wrong country, wrong callsign, wrong network, placeholder guide.
-    expected_country (from the provider's playlist) overrides the group's home country."""
+    expected_country (from the provider's playlist) overrides the group's home country; id_country gives the
+    country of guide IDs that are bare numbers (from their source file)."""
     reasons = []
     region = region_of(name)
-    country = country_of(xml_id)
+    country = country_of(xml_id) or id_country
     if country:
         if expected_country:
             if not same_country(country, expected_country):
@@ -137,7 +138,7 @@ def flag_reasons(name, xml_id, expected_country=None):
     in_id = {n for n in NETWORKS if n in xml_id.upper()}
     if in_name and in_id and not (in_name & in_id):
         reasons.append("network")
-    if "dummy" in xml_id.lower():
+    if "dummy" in xml_id.lower() or re.search(r"(?<![a-z])ppv(?![a-z])", xml_id.lower()):
         reasons.append("placeholder")
     return reasons
 
@@ -277,7 +278,7 @@ def carry_over_renames(current_names, known):
     return renames
 
 
-def quick_match(channel_name, pools, expected_country=None):
+def quick_match(channel_name, pools, expected_country=None, id_countries=None):
     """A strict automatic match: nearly identical name, right country, never a +1 feed, never a generic word,
     never a placeholder. Every guide sharing the display name is considered, so the right country can be found."""
     if NO_GUIDE_PATTERN.search(channel_name):
@@ -290,7 +291,7 @@ def quick_match(channel_name, pools, expected_country=None):
         if bool(TIMESHIFT.search(display)) != wants_timeshift:
             continue
         for xml_id in pools.ids_by_name[display]:
-            if not flag_reasons(channel_name, xml_id, expected_country):
+            if not flag_reasons(channel_name, xml_id, expected_country, (id_countries or {}).get(xml_id)):
                 return xml_id
     return None
 
@@ -305,11 +306,12 @@ class Resolution:
 
 
 def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejected=None, legacy=None,
-            index=None, expected=None, max_candidates=10):
+            index=None, expected=None, id_countries=None, max_candidates=10):
     provider_ids = provider_ids or {}
     rejected = rejected or {}
     legacy = legacy or {}
     expected = expected or {}
+    id_countries = id_countries or {}
     pools = Pools(by_name, index)
     renames_known = carry_over_renames(names, known)
     renames_legacy = carry_over_renames(names, legacy)
@@ -327,7 +329,7 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
         def usable(xml_id, trusted):
             if xml_id not in valid_ids or xml_id in refused:
                 return False
-            return trusted or (not flag_reasons(name, xml_id, expected.get(name))
+            return trusted or (not flag_reasons(name, xml_id, expected.get(name), id_countries.get(xml_id))
                                and (index is None or resembles(name, xml_id, index)))
 
         old = legacy.get(name)
@@ -344,7 +346,7 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
         elif rename and usable(rename["id"], trusted=rename_trusted):
             accept(name, rename["id"], "renamed", "carried")
             result.carried[name] = rename
-        elif (auto := quick_match(name, pools, expected.get(name))) and auto not in refused:
+        elif (auto := quick_match(name, pools, expected.get(name), id_countries)) and auto not in refused:
             accept(name, auto, "auto", "auto")
         else:
             hint = saved or old or (rename or {}).get("id")

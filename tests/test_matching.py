@@ -257,3 +257,16 @@ def test_resemblance_ignores_spacing_and_accents_but_not_different_numbers():
     assert not ok("UK: REALITY SHOW 6", "TNT.Sports.6.HD.uk", "TNT Sports 6 HD")
     assert not ok("US: WHERE ARE YOU 4K", "WYOU-DT.us_locals1", "WYOU-DT")
     assert matching.normalize_name("CA: ÉVASION") == matching.normalize_name("CA| EVASION")
+
+
+def test_numeric_guide_ids_get_their_source_country():
+    assert matching.flag_reasons("US: NICKELODEON HD", "12084", id_country="uk") == ["region"]
+    assert matching.flag_reasons("US: NICKELODEON HD", "12084") == []
+    by_name = {"Nickelodeon": "12084"}
+    index = {"12084": ["Nickelodeon"], "Nickelodeon.us2": ["Nickelodeon"]}
+    pools = matching.Pools(by_name, index)
+    assert matching.quick_match("US: NICKELODEON HD", pools, id_countries={"12084": "uk"}) == "Nickelodeon.us2"
+
+
+def test_ppv_guides_are_placeholders():
+    assert "placeholder" in matching.flag_reasons("CA EN: ROGERS SUPER SPORTS PACK 24", "PPV.Sports.ca2")

@@ -109,3 +109,10 @@ def test_external_entities_are_not_expanded(tmp_path):
 def test_sources_drop_dead_epghub():
     assert len(epg_cache.SOURCES) == 9
     assert not any("epghub.xyz" in url for url, _ in epg_cache.SOURCES)
+
+
+def test_numeric_ids_from_single_country_sources_get_that_country(tmp_path, monkeypatch):
+    monkeypatch.setattr(epg_cache, "download_file", lambda url, dest, timeout=120: False)
+    make_source(tmp_path / "epg_uk_pw.xml.gz", [prog("12084"), prog("BBCOne.uk")], names={"12084": ["Nickelodeon"]})
+    ref = epg_cache.fetch_reference_data([("https://example.invalid/gb", "epg_uk_pw.xml.gz")], str(tmp_path), 24)
+    assert ref.id_country == {"12084": "uk"}
