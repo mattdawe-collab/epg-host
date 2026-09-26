@@ -113,7 +113,7 @@ Every nightly run scores the guide. The scores go in `status.json`, the run summ
 | **Headline** | Coverage × Fresh × Accuracy: an estimate of the share of channels with a correct, current guide. Before any audit it uses accuracy 1.0 and is labelled "unaudited". |
 
 The automatic checks that raise a flag, with no AI involved:
-- **Region:** a `US|`, `SLING|`, `CA|` or `UK|` channel is matched to a guide ID from a different country.
+- **Region:** a `US|`, `SLING|`, `CA|` or `UK|` channel is matched to a guide ID whose suffix is a different two-letter country code, such as `.co` or `.in`. Numbered and underscored variants like `.ca2` and `.us_locals1` count as that country. Platform suffixes such as `.plex` or `.com` aren't countries and are never flagged.
 - **Call sign:** the channel name contains a call sign in parentheses, such as "(WABC)", and the guide ID doesn't.
 - **Network:** the channel name says ABC, CBS, NBC, FOX, CW or PBS, and the guide ID names a different one of those networks but not the one in the name.
 

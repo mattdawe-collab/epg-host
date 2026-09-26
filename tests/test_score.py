@@ -10,6 +10,13 @@ def test_region_flag():
     assert score.flag_reasons("SPORTS| NBA 1", "NBA.uk") == []
 
 
+def test_platform_guide_ids_are_not_a_region_problem():
+    assert score.flag_reasons("US| REAL AMERICA'S VOICE", "RealAmericasVoice.plex") == []
+    assert score.flag_reasons("UK| BBC ONE", "BBCOne.gb") == []
+    assert "region" in score.flag_reasons("CA| A&E HD", "A&E.co")
+    assert "region" in score.flag_reasons("US| NEWS", "News.ca2")
+
+
 def test_callsign_flag():
     assert "callsign" in score.flag_reasons("US| ABC 7 (WABC)", "KABC.us")
     assert "callsign" not in score.flag_reasons("US| ABC 7 (WABC)", "ABC.(WABC).New.York,.NY.us")

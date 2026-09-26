@@ -5,7 +5,8 @@ from matching import region_of
 
 NETWORKS = ("ABC", "CBS", "NBC", "FOX", "CW", "PBS")
 CALLSIGN = re.compile(r"\(([A-Z]{4,5})\)")
-COUNTRY_SUFFIXES = {"US": ("us", "com"), "CA": ("ca",), "UK": ("uk",)}
+HOME_COUNTRIES = {"US": {"us"}, "CA": {"ca"}, "UK": {"uk", "gb"}}
+COUNTRY_SUFFIX = re.compile(r"^([a-z]{2})(?:\d+|_.*)?$")  # ".us", ".ca2", ".us_locals1"; ".plex"/".com" are not countries
 AUDIT_WINDOW = 200
 HISTORY_DAYS = 365
 
@@ -13,8 +14,8 @@ HISTORY_DAYS = 365
 def flag_reasons(name, xml_id):
     reasons = []
     region = region_of(name)
-    suffix = xml_id.rsplit(".", 1)[-1].lower() if "." in xml_id else ""
-    if region in COUNTRY_SUFFIXES and suffix and not suffix.startswith(COUNTRY_SUFFIXES[region]):
+    country = COUNTRY_SUFFIX.match(xml_id.rsplit(".", 1)[-1].lower()) if "." in xml_id else None
+    if region in HOME_COUNTRIES and country and country.group(1) not in HOME_COUNTRIES[region]:
         reasons.append("region")
     callsign = CALLSIGN.search(name)
     if callsign and callsign.group(1) not in xml_id.upper():
