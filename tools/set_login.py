@@ -1,6 +1,9 @@
 """Update the IPTV login in .env and in the repo's GitHub Actions secrets.
 
 Run it whenever the provider login changes. Nothing entered here is printed.
+The provider refuses requests from some connections (HTTP 513 - the old setup needed a VPN), so the
+login check can fail even for a good login. Connect the VPN first, or pass --no-check to save the
+login anyway and let the nightly GitHub build test it from GitHub's servers.
 """
 import datetime
 import getpass
@@ -40,7 +43,9 @@ def check_login(login):
     except ValueError:
         info = {}
     if r.status_code != 200 or str(info.get("auth")) != "1":
-        sys.exit(f"The provider rejected this login (HTTP {r.status_code}). Nothing was changed.")
+        sys.exit(f"The provider refused this request (HTTP {r.status_code}). That happens for a wrong login, "
+                 f"but also when the provider blocks this connection - try again with the VPN on, or run "
+                 f"with --no-check to save it anyway. Nothing was changed.")
     expires = info.get("exp_date")
     expires = datetime.date.fromtimestamp(int(expires)).isoformat() if expires else "no expiry given"
     print(f"Login OK - status: {info.get('status')}, expires: {expires}, "
@@ -73,7 +78,10 @@ def update_github(login):
 
 if __name__ == "__main__":
     login = ask()
-    check_login(login)
+    if "--no-check" in sys.argv[1:]:
+        print("Skipping the login check - the next GitHub build will show whether the provider accepts it.")
+    else:
+        check_login(login)
     update_env(login)
     update_github(login)
     print("Done.")
