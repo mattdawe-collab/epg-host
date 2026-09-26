@@ -1,262 +1,117 @@
-"""
-EPG Cache Module - Smart caching for EPG data sources
-Handles downloading, caching, and parsing EPG XML files
-"""
-import os
+"""Download, cache and read the channel lists of the XMLTV guide sources."""
 import gzip
-import requests
+import os
 import time
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+
+import requests
 from lxml import etree
-from typing import Dict, Set, Tuple, List, Callable, Optional
+
+SOURCES = [
+    ("https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz", "all_sources.xml.gz"),
+    ("https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz", "us_locals.xml.gz"),
+    ("https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz", "us_sports.xml.gz"),
+    ("https://epg.pw/xmltv/epg_GB.xml.gz", "epg_uk_pw.xml.gz"),
+    ("https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz", "epg_uk_ripper.xml.gz"),
+    ("https://epg.pw/xmltv/epg_CA.xml.gz", "epg_canada_pw.xml.gz"),
+    ("https://raw.githubusercontent.com/globetvapp/epg/main/Canada/canada1.xml.gz", "globetv_canada1.xml.gz"),
+    ("https://raw.githubusercontent.com/globetvapp/epg/main/Canada/canada2.xml.gz", "globetv_canada2.xml.gz"),
+    ("https://raw.githubusercontent.com/globetvapp/epg/main/Canada/canada3.xml.gz", "globetv_canada3.xml.gz"),
+]
 
 
-def get_cache_age_hours(cache_path: str) -> float:
-    """Get the age of a cached file in hours"""
-    if not os.path.exists(cache_path):
-        return float('inf')
-    
-    mtime = os.path.getmtime(cache_path)
-    age_seconds = time.time() - mtime
-    return age_seconds / 3600
+@dataclass
+class ReferenceData:
+    by_name: dict = field(default_factory=dict)        # display name -> channel id (first source wins)
+    valid_ids: set = field(default_factory=set)
+    index: dict = field(default_factory=dict)          # channel id -> display names
+    source_status: dict = field(default_factory=dict)  # filename -> downloaded | cached | stale cache | failed
+    paths: list = field(default_factory=list)          # readable source files, in source order
 
 
-def download_file(url: str, dest_path: str, timeout: int = 60) -> bool:
-    """Download a file with progress indication"""
+def get_cache_age_hours(path):
+    if not os.path.exists(path):
+        return float("inf")
+    return (time.time() - os.path.getmtime(path)) / 3600
+
+
+def download_file(url, dest_path, timeout=120):
+    """Download to a temp file and only replace dest_path when the result is a gzip file."""
+    tmp_path = dest_path + ".part"
     try:
-        print(f"    Downloading: {url[:60]}...")
-        response = requests.get(url, timeout=timeout, stream=True)
-        response.raise_for_status()
-        
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded = 0
-        
-        with open(dest_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
+        print(f"    Downloading {url}")
+        with requests.get(url, timeout=timeout, stream=True) as response:
+            response.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1 << 16):
                     f.write(chunk)
-                    downloaded += len(chunk)
-        
-        size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-        print(f"    [OK] Downloaded: {size_mb:.1f} MB")
+        with open(tmp_path, "rb") as f:
+            if f.read(2) != b"\x1f\x8b":
+                raise ValueError("not a gzip file")
+        os.replace(tmp_path, dest_path)
+        print(f"    [OK] {os.path.getsize(dest_path) / 1048576:.1f} MB")
         return True
-        
     except Exception as e:
-        print(f"    [FAIL] Download failed: {e}")
+        print(f"    [FAIL] {type(e).__name__}: {e}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         return False
 
 
-def parse_epg_channels(file_path: str, is_dummy_callback: Optional[Callable] = None) -> Tuple[Dict[str, str], Set[str]]:
-    """
-    Parse an EPG XML file and extract channel information.
-    
-    Returns:
-        Tuple of (reference_data dict, valid_ids set)
-        - reference_data: {display_name: xmlid}
-        - valid_ids: set of all valid channel IDs
-    """
-    reference_data = {}
-    valid_ids = set()
-    
+def parse_epg_channels(path):
+    """Read the <channel> list. XMLTV lists channels before programmes, so stop at the first programme."""
+    by_name, ids, index = {}, set(), {}
     try:
-        opener = gzip.open if file_path.endswith('.gz') else open
-        
-        with opener(file_path, 'rb') as f:
-            context = etree.iterparse(f, events=('end',), tag='channel')
-            
-            for event, elem in context:
-                channel_id = elem.get('id', '')
-                
-                # Skip bad/dummy IDs
-                if is_dummy_callback and is_dummy_callback(channel_id):
-                    elem.clear()
-                    continue
-                
+        with gzip.open(path, "rb") as f:
+            for _, elem in etree.iterparse(f, events=("end",), tag=("channel", "programme")):
+                if elem.tag == "programme":
+                    break
+                channel_id = (elem.get("id") or "").strip()
                 if channel_id:
-                    valid_ids.add(channel_id)
-                    
-                    # Get all display names for this channel
-                    for display_name_elem in elem.findall('display-name'):
-                        if display_name_elem.text:
-                            display_name = display_name_elem.text.strip()
-                            # Only add if not already present (first occurrence wins)
-                            if display_name not in reference_data:
-                                reference_data[display_name] = channel_id
-                
-                # Memory cleanup
+                    ids.add(channel_id)
+                    names = index.setdefault(channel_id, [])
+                    for display in elem.findall("display-name"):
+                        text = (display.text or "").strip()
+                        if text:
+                            by_name.setdefault(text, channel_id)
+                            if text not in names:
+                                names.append(text)
                 elem.clear()
-                while elem.getprevious() is not None:
-                    del elem.getparent()[0]
-                    
     except Exception as e:
-        print(f"    [FAIL] Error parsing {file_path}: {e}")
-    
-    return reference_data, valid_ids
+        print(f"    [FAIL] Could not read {os.path.basename(path)}: {type(e).__name__}: {e}")
+    return by_name, ids, index
 
 
-def fetch_reference_data_smart(
-    reference_sources: List[Tuple[str, str]],
-    cache_dir: str,
-    valid_ids_callback: Optional[Callable] = None,
-    force_refresh: bool = False,
-    cache_max_age_hours: float = 24.0
-) -> Tuple[Dict[str, str], Set[str]]:
-    """
-    Fetch and parse EPG reference data with smart caching.
-    
-    Args:
-        reference_sources: List of (url, filename) tuples
-        cache_dir: Directory to store cached files
-        valid_ids_callback: Function to check if ID is invalid/dummy
-        force_refresh: If True, re-download all files regardless of cache
-        cache_max_age_hours: Maximum age of cache before refresh (default 24 hours)
-    
-    Returns:
-        Tuple of (reference_data dict, valid_ids set)
-    """
+def fetch_reference_data(sources, cache_dir, cache_max_age_hours=24.0):
     os.makedirs(cache_dir, exist_ok=True)
-    
-    combined_reference_data = {}
-    combined_valid_ids = set()
-    
-    for url, filename in reference_sources:
-        cache_path = os.path.join(cache_dir, filename)
-        cache_age = get_cache_age_hours(cache_path)
-        
-        # Determine if we need to download
-        needs_download = force_refresh or cache_age > cache_max_age_hours or not os.path.exists(cache_path)
-        
-        if needs_download:
-            if cache_age != float('inf'):
-                print(f"  [{filename}] Cache age: {cache_age:.1f}h (max: {cache_max_age_hours}h) - refreshing")
-            else:
-                print(f"  [{filename}] No cache found - downloading")
-            
-            success = download_file(url, cache_path)
-            if not success and os.path.exists(cache_path):
-                print(f"    Using stale cache for {filename}")
-            elif not success:
-                print(f"    Skipping {filename} - no data available")
-                continue
+    ref = ReferenceData()
+    for url, filename in sources:
+        path = os.path.join(cache_dir, filename)
+        age = get_cache_age_hours(path)
+        if age <= cache_max_age_hours:
+            status = "cached"
+            print(f"  [{filename}] using cache ({age:.1f}h old)")
         else:
-            print(f"  [{filename}] Using cache (age: {cache_age:.1f}h)")
-        
-        # Parse the file
-        print(f"    Parsing {filename}...")
-        ref_data, valid_ids = parse_epg_channels(cache_path, valid_ids_callback)
-        
-        # Merge results (first source wins for duplicate display names)
-        for display_name, xmlid in ref_data.items():
-            if display_name not in combined_reference_data:
-                combined_reference_data[display_name] = xmlid
-        
-        combined_valid_ids.update(valid_ids)
-        
-        print(f"    [OK] Found {len(ref_data):,} display names, {len(valid_ids):,} channel IDs")
-    
-    print(f"\n  Total: {len(combined_reference_data):,} display names, {len(combined_valid_ids):,} unique channel IDs")
-    
-    return combined_reference_data, combined_valid_ids
-
-
-def build_reverse_lookup(reference_data: Dict[str, str]) -> Dict[str, List[str]]:
-    """
-    Build a reverse lookup: {xmlid: [display_names]}
-    Useful for finding all names associated with a channel ID
-    """
-    reverse = {}
-    for display_name, xmlid in reference_data.items():
-        if xmlid not in reverse:
-            reverse[xmlid] = []
-        reverse[xmlid].append(display_name)
-    return reverse
-
-
-def extract_callsign_from_epg_id(xmlid: str) -> Optional[str]:
-    """
-    Extract FCC/CRTC callsign from an EPG XMLID.
-    
-    Examples:
-        "WABC.us" -> "WABC"
-        "ABC.(WABC).New.York,.NY.us" -> "WABC"
-        "CBLT.ca" -> "CBLT"
-    """
-    import re
-    
-    if not xmlid:
-        return None
-    
-    # Pattern 1: Callsign in parentheses
-    match = re.search(r'\(([A-Z]{3,5}(?:-?[A-Z0-9]*)?)\)', xmlid)
-    if match:
-        return match.group(1).replace('-', '')
-    
-    # Pattern 2: Simple format like "WABC.us" or "CBLT.ca"
-    match = re.match(r'^([A-Z]{3,5})\.', xmlid)
-    if match:
-        return match.group(1)
-    
-    # Pattern 3: Format like "ABC.East.us"
-    match = re.match(r'^([A-Z]{2,4})\.', xmlid)
-    if match:
-        potential = match.group(1)
-        # Only return if it looks like a network code, not a callsign
-        if potential in ['ABC', 'NBC', 'CBS', 'FOX', 'PBS', 'CW', 'CTV', 'CBC', 'TSN', 'RDS']:
-            return None
-        return potential
-    
-    return None
-
-
-def get_xmlids_by_callsign(valid_ids: Set[str], callsign: str) -> List[str]:
-    """
-    Find all XMLIDs that contain a specific callsign.
-    """
-    import re
-    
-    callsign_upper = callsign.upper()
-    matches = []
-    
-    for xmlid in valid_ids:
-        # Check if callsign appears in the XMLID
-        if callsign_upper in xmlid.upper():
-            matches.append(xmlid)
-        # Also check for patterns like "(WABC)" in the ID
-        if f"({callsign_upper})" in xmlid.upper():
-            matches.append(xmlid)
-    
-    return list(set(matches))
-
-
-def validate_epg_coverage(valid_ids: Set[str]) -> Dict[str, int]:
-    """
-    Analyze EPG coverage by region/network.
-    Returns counts of channels by category.
-    """
-    stats = {
-        'us_total': 0,
-        'ca_total': 0,
-        'uk_total': 0,
-        'us_locals': 0,
-        'us_cable': 0,
-        'ca_broadcast': 0,
-        'ca_specialty': 0,
-    }
-    
-    def _is_region(xid, region):
-        suffix = xid.rsplit('.', 1)[-1] if '.' in xid else ''
-        return suffix.startswith(region)
-
-    for xmlid in valid_ids:
-        if _is_region(xmlid, 'us'):
-            stats['us_total'] += 1
-            if '(' in xmlid and ')' in xmlid:
-                stats['us_locals'] += 1
+            print(f"  [{filename}] downloading")
+            if download_file(url, path):
+                status = "downloaded"
+            elif os.path.exists(path):
+                status = "stale cache"
             else:
-                stats['us_cable'] += 1
-        elif _is_region(xmlid, 'ca'):
-            stats['ca_total'] += 1
-        elif _is_region(xmlid, 'uk'):
-            stats['uk_total'] += 1
-    
-    return stats
+                ref.source_status[filename] = "failed"
+                continue
+        by_name, ids, index = parse_epg_channels(path)
+        if not ids:
+            ref.source_status[filename] = "failed"
+            continue
+        ref.source_status[filename] = status
+        ref.paths.append(path)
+        for name, channel_id in by_name.items():
+            ref.by_name.setdefault(name, channel_id)
+        ref.valid_ids |= ids
+        for channel_id, names in index.items():
+            merged = ref.index.setdefault(channel_id, [])
+            merged.extend(n for n in names if n not in merged)
+        print(f"    [OK] {len(by_name):,} names, {len(ids):,} channel IDs")
+    print(f"  Total: {len(ref.by_name):,} names, {len(ref.valid_ids):,} channel IDs")
+    return ref
