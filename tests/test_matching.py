@@ -403,3 +403,21 @@ def test_numbers_glued_to_names_still_agree():
 def test_east_in_a_place_name_is_kept():
     assert matching.normalize_name("UK: BBC ONE SOUTH EAST") != matching.normalize_name("UK: BBC ONE SOUTH")
     assert matching.normalize_name("US: HBO EAST") == matching.normalize_name("US| HBO")
+
+
+def test_a_literal_west_wins_over_pacific():
+    index = {"Sportsnet.(Pacific).ca2": ["Sportsnet (Pacific)"], "Sportsnet.West.HD.ca2": ["Sportsnet West HD"]}
+    pools = matching.Pools({}, index)
+    assert matching.quick_match("CA EN: SPORTSNET WEST HD", pools) == "Sportsnet.West.HD.ca2"
+    assert matching.quick_match("CA EN: SPORTSNET PACIFIC HD", pools) == "Sportsnet.(Pacific).ca2"
+
+
+def test_names_made_only_of_generic_and_feed_words_are_not_auto_matched():
+    assert matching.quick_match("PLAY+: TV WEST ᴿᴬᵂ", matching.Pools({}, {"TVA.(Pacific).ca2": ["TVA (Pacific)"]})) is None
+
+
+def test_automatic_matches_must_agree_on_channel_numbers():
+    pools = matching.Pools({}, {"Big.Ten.Network.Overflow.HD.us2": ["Big Ten Network Overflow HD"],
+                                "NBC.Sports.California.Plus.3.us2": ["NBC Sports California Plus 3"]})
+    assert matching.quick_match("TV: BIG TEN NETWORK OVERFLOW 2 ᴿᴬᵂ", pools) is None
+    assert matching.quick_match("US: NBC SPORTS CALIFORNIA PLUS 2 (A) ᴿᴬᵂ", pools) is None

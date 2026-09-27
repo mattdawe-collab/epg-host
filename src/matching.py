@@ -220,6 +220,16 @@ def resembles(channel_name, xml_id, index):
     return any(w in guide_words or (len(w) >= 5 and w in joined) for w in words)
 
 
+def literal_name(text):
+    """A name without decorations or quality words, but with East/West/Pacific as written."""
+    return squeeze(QUALITY_WORDS.sub(" ", strip_decorations(split_tag(text)[1])))
+
+
+def numbers_compatible(a, b):
+    """Only single digits (and +1-style timeshifts) must agree; long numbers such as TV18 are branding."""
+    return all(len(n.lstrip("+")) > 1 for n in channel_numbers(a) ^ channel_numbers(b))
+
+
 def squeeze(text):
     """rapidfuzz's default processing, with runs of spaces collapsed ('cinemax    west' -> 'cinemax west')."""
     return " ".join(utils.default_process(text).split())
@@ -241,6 +251,7 @@ class Pools:
         # compare on names without quality words or decorations: "CNN HD" in a guide must match a channel "CNN"
         self._all_processed = [squeeze(QUALITY_WORDS.sub(" ", normalize_feed(strip_decorations(n))))
                                for n in self._all_names]
+        self.literal = {n: literal_name(n) for n in self._all_names}  # before East/Pacific normalising
         regional = {r: {n: i for n, i in by_name.items() if is_region(i, r.lower())} for r in ("US", "CA", "UK")}
         self.maps = {r: (m or by_name) for r, m in regional.items()}
         self.maps["ALL"] = by_name
@@ -360,10 +371,16 @@ def quick_match(channel_name, pools, expected_country=None, id_countries=None):
     core = " ".join(extract_core_name(channel_name).split())
     if len(core) < 3 or core.upper() in GENERIC_CORES:
         return None
+    if not [w for w in core.upper().split() if w not in GENERIC_CORES and w not in FEED_WORDS]:
+        return None  # "TV WEST" is only generic and feed words
     wants_timeshift = bool(TIMESHIFT.search(channel_name))
+    literal = literal_name(channel_name)
     for query in query_variants(core):
-        for display in pools.close_names(query, AUTO_MATCH_SCORE):
-            if bool(TIMESHIFT.search(display)) != wants_timeshift:
+        numbered_as = channel_name if query == core else query  # a rebrand ("EPIX 2" -> "MGM+ HITS") brings its own numbers
+        displays = pools.close_names(query, AUTO_MATCH_SCORE)
+        displays.sort(key=lambda d: pools.literal[d] != literal)  # "Sportsnet West" before "Sportsnet (Pacific)"
+        for display in displays:
+            if bool(TIMESHIFT.search(display)) != wants_timeshift or not numbers_compatible(numbered_as, display):
                 continue
             for xml_id in pools.ids_by_name[display]:
                 if not flag_reasons(channel_name, xml_id, expected_country, (id_countries or {}).get(xml_id)):
@@ -389,8 +406,7 @@ def numbers_agree(channel_name, xml_id, index):
     names = index.get(xml_id)
     if not names:
         return True
-    wanted = channel_numbers(channel_name)
-    return any(all(len(n.lstrip("+")) > 1 for n in wanted ^ channel_numbers(name)) for name in names)
+    return any(numbers_compatible(channel_name, name) for name in names)
 
 
 NUMBER_WORDS = {"ONE": "1", "TWO": "2", "THREE": "3", "FOUR": "4", "FIVE": "5", "SIX": "6", "SEVEN": "7", "EIGHT": "8",
