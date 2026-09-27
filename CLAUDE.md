@@ -49,6 +49,7 @@ Run everything from the repo root (`C:\Users\Admin\Documents\AI_EPG_Bridge`), on
 - **Same network only:** a FOX channel never gets a CBS, NBC or ABC affiliate.
 - **Exact content:** "Discovery" is not "Discovery Science", "AMC" is not "AMC+", and "Sportsnet Ontario" is not "Sportsnet West".
 - **Feeds:** "West" and "Pacific" are the same feed. "East" is the default.
+- **Rebrands:** EPIX is now MGM+ (EPIX 2 = MGM+ Hits, EPIX Hits = MGM+ Marquee); Showtime is Paramount+ with Showtime; the guide calls most Sky Cinema channels "Sky Action", "Sky Premiere" and so on. When you find another rebrand, add it to `BRAND_ALIASES` in `src/matching.py`, with a test.
 - **No guide:** pay-per-view, event, replay and 24/7 loop channels are `NO_GUIDE`.
 - **Unsure:** use `SKIP`, which leaves the channel queued. A wrong guide is worse than none.
 

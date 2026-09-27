@@ -155,6 +155,23 @@ The user saw many local ABC/FOX/NBC/CBS affiliates missing: only 245 of about 2,
 - **Result:** local-network channels with a guide went from 245 to 1,398. The guide grew to 3,775 channels; coverage is 49%, fresh 96%. Audit: 58 of 60 station matches correct.
 - **Known limit:** when the network sits on a sub-channel the name doesn't mention ("NBC 21 (WPTA)", where NBC is WPTA-DT2), the main feed is used. Audits and sessions fix these one by one.
 
+## Movie channels pass (user request, 2026-09-26)
+
+A focused pass on HBO, Showtime, Starz, Cinemax, MGM+, TCM, Sky Cinema and similar channels. Before it, 191 of 331 movie channels had a guide; after it, 246.
+
+- **East is the default feed.** A standalone "EAST" is ignored and "Pacific" counts as "West", in channel names, guide names and carry-over keys. "South East" and "Middle East" are places and are kept. For example, "PARAMOUNT+ WITH SHOWTIME EAST" matches "Paramount+ with Showtime HD", and "CINEMAX WEST" matches "Cinemax HD (Pacific)".
+- **Rebrands and short names** (`BRAND_ALIASES`, tried as extra spellings):
+  - Sky Cinema X → Sky X
+  - TCM → Turner Classic Movies
+  - Lifetime Movie Network → LMN
+  - EPIX → MGM+, EPIX 2 → MGM+ Hits, EPIX Hits → MGM+ Marquee, EPIX Drive-In → MGM+ Drive-In
+  - Showtime → Paramount+ with Showtime
+  - FXM → FX Movie Channel, Sundance → SundanceTV, TMC → The Movie Channel
+- **Legacy matches must agree on channel numbers.** Single digits must match, glued or not (OMNI 2 ~ OMNI2; SHOWTIME ≠ Showtime 2). A +1 timeshift must match (E4 ≠ E4+1). Long numbers such as TV18 or CP24 are branding. "Ch.5" labels and a plain "1" are ignored.
+- **Numbered streaming loops** ("HBO MAX ORIGINAL 11", "DISNEY+ SERIES 4", "HULU ORIGINALS 9") get no guide automatically.
+- **Fuzzy comparisons collapse runs of spaces**, so names left with gaps after removing HD/(Pacific) still compare cleanly.
+- **Build after the pass:** 3,814 channels, coverage 50.3%, fresh 96.7%.
+
 ## Scorecard (requested 2026-09-26)
 
 Every nightly run scores the guide. The scores go in `status.json`, the run summary and `score_history.json` on `main`. The history is carried forward from last night's copy, keeping 365 days.

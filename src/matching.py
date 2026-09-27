@@ -30,7 +30,20 @@ _PREFIXES_LONGEST_FIRST = sorted(PRIORITY_PREFIXES, key=len, reverse=True)
 PREFIX_WORDS = {p[:-2].strip().upper() for p in PRIORITY_PREFIXES} | {"EU", "LOCALS", "CHANNELS"}
 AUTO_MATCH_SCORE = 93
 QUALITY_WORDS = re.compile(r"\b(HD|SD|UHD|FHD|4K|HEVC|H264|H265|1080P|720P|60FPS)\b", re.IGNORECASE)
-NO_GUIDE_PATTERN = re.compile(r"\b(PPV|EVENTS?|REPLAY|LOOP)\b|\b24/7\b", re.IGNORECASE)
+NO_GUIDE_PATTERN = re.compile(r"\b(PPV|EVENTS?|REPLAY|LOOP)\b|\b24/7\b|\b(ORIGINALS?|SERIES)\s+\d+\b",
+                              re.IGNORECASE)  # numbered streaming loops: "HBO MAX ORIGINAL 11", "NETFLIX SERIES 10"
+# Rebrands and short names, tried as extra spellings of a channel's core name (applied to the upper-cased core).
+BRAND_ALIASES = [
+    (r"^SKY CINEMA (.+)$", r"SKY \1"),                       # the guide calls most of them "Sky Action", "Sky Premiere"
+    (r"^TCM$", "TURNER CLASSIC MOVIES"),
+    (r"^(LIFETIME MOVIE NETWORK|LIFETIME MOVIES)$", "LMN"),
+    (r"^EPIX$", "MGM+"), (r"^EPIX 2$", "MGM+ HITS"), (r"^EPIX HITS$", "MGM+ MARQUEE"),
+    (r"^EPIX DRIVE ?-?IN$", "MGM+ DRIVE-IN"),                 # EPIX became MGM+ in 2023
+    (r"^SHOWTIME$", "PARAMOUNT+ WITH SHOWTIME"),             # Showtime became Paramount+ with Showtime in 2024
+    (r"^FXM$", "FX MOVIE CHANNEL"),
+    (r"^SUNDANCE$", "SUNDANCETV"),
+    (r"^TMC$", "THE MOVIE CHANNEL"),
+]
 CALLSIGN_IN_NAME = re.compile(r"\(([A-Z]{4,5})\)")
 FEED_WORDS = {"WEST", "EAST", "PACIFIC"}
 GENERIC_CORES = {"PPV", "WEST", "EAST", "PACIFIC", "LIVE", "TV", "EVENT", "EVENTS", "HD", "SD", "UHD", "4K",
@@ -72,13 +85,20 @@ def fold_accents(text):
     return "".join(ch for ch in unicodedata.normalize("NFKD", text) if unicodedata.category(ch) != "Mn")
 
 
+def normalize_feed(text):
+    """East is the default feed and Pacific is West: 'HBO East' -> 'HBO', 'Cinemax (Pacific)' -> 'Cinemax WEST'."""
+    text = re.sub(r"\((?:EAST|EASTERN)\)|(?<!NORTH )(?<!SOUTH )(?<!MIDDLE )(?<!FAR )\b(?:EAST|EASTERN)\b", " ",
+                  text, flags=re.IGNORECASE)  # "South East" and "Middle East" are places, not feeds
+    return re.sub(r"\((?:WEST|PACIFIC)\)|\bPACIFIC\b", " WEST ", text, flags=re.IGNORECASE)
+
+
 def extract_core_name(channel_name):
     """The part of a decorated IPTV name that identifies the channel: a callsign if present."""
     for callsign in CALLSIGN_IN_NAME.findall(channel_name):
         if callsign not in FEED_WORDS:
             return callsign
     clean = strip_decorations(split_tag(channel_name)[1])
-    clean = re.sub(r"\((?:WEST|EAST|PACIFIC)\)", " ", clean, flags=re.IGNORECASE)
+    clean = normalize_feed(clean)
     clean = QUALITY_WORDS.sub("", clean)
     clean = re.sub(r"^[#|]+\s*", "", clean)
     clean = re.sub(r"\s*[#|]+$", "", clean)
@@ -96,7 +116,7 @@ def normalize_name(name):
         prefix, sep, rest = name.partition("| ")
         if not sep:
             prefix, rest = "", name
-    rest = QUALITY_WORDS.sub(" ", fold_accents(strip_decorations(rest)).replace("+", " PLUS "))
+    rest = QUALITY_WORDS.sub(" ", normalize_feed(fold_accents(strip_decorations(rest))).replace("+", " PLUS "))
     rest = " ".join(re.sub(r"[^0-9A-Za-z]+", " ", rest).upper().split())
     return f"{prefix.strip().upper()}|{rest}"
 
@@ -200,6 +220,11 @@ def resembles(channel_name, xml_id, index):
     return any(w in guide_words or (len(w) >= 5 and w in joined) for w in words)
 
 
+def squeeze(text):
+    """rapidfuzz's default processing, with runs of spaces collapsed ('cinemax    west' -> 'cinemax west')."""
+    return " ".join(utils.default_process(text).split())
+
+
 class Pools:
     """Display-name pools per region, prepared once for fast searching. `index` (guide ID -> display names)
     lets automatic matching see every guide sharing a display name, not just the first source's."""
@@ -214,7 +239,8 @@ class Pools:
                 self.ids_by_name[display].append(xml_id)
         self._all_names = list(self.ids_by_name)
         # compare on names without quality words or decorations: "CNN HD" in a guide must match a channel "CNN"
-        self._all_processed = [utils.default_process(QUALITY_WORDS.sub(" ", strip_decorations(n))) for n in self._all_names]
+        self._all_processed = [squeeze(QUALITY_WORDS.sub(" ", normalize_feed(strip_decorations(n))))
+                               for n in self._all_names]
         regional = {r: {n: i for n, i in by_name.items() if is_region(i, r.lower())} for r in ("US", "CA", "UK")}
         self.maps = {r: (m or by_name) for r, m in regional.items()}
         self.maps["ALL"] = by_name
@@ -224,7 +250,7 @@ class Pools:
 
     def close_names(self, text, cutoff, limit=10):
         """Display names nearly identical to text (plain ratio, no partial matching), best first."""
-        hits = process.extract(utils.default_process(text), self._all_processed,
+        hits = process.extract(squeeze(text), self._all_processed,
                                scorer=fuzz.ratio, processor=None, score_cutoff=cutoff, limit=limit)
         return [self._all_names[i] for _, _, i in hits]
 
@@ -331,17 +357,60 @@ def quick_match(channel_name, pools, expected_country=None, id_countries=None):
     never a placeholder. Every guide sharing the display name is considered, so the right country can be found."""
     if NO_GUIDE_PATTERN.search(channel_name):
         return None
-    core = extract_core_name(channel_name)
+    core = " ".join(extract_core_name(channel_name).split())
     if len(core) < 3 or core.upper() in GENERIC_CORES:
         return None
     wants_timeshift = bool(TIMESHIFT.search(channel_name))
-    for display in pools.close_names(core, AUTO_MATCH_SCORE):
-        if bool(TIMESHIFT.search(display)) != wants_timeshift:
-            continue
-        for xml_id in pools.ids_by_name[display]:
-            if not flag_reasons(channel_name, xml_id, expected_country, (id_countries or {}).get(xml_id)):
-                return xml_id
+    for query in query_variants(core):
+        for display in pools.close_names(query, AUTO_MATCH_SCORE):
+            if bool(TIMESHIFT.search(display)) != wants_timeshift:
+                continue
+            for xml_id in pools.ids_by_name[display]:
+                if not flag_reasons(channel_name, xml_id, expected_country, (id_countries or {}).get(xml_id)):
+                    return xml_id
     return None
+
+
+def query_variants(core):
+    """The core name, then any rebranded or long-form spelling of it (BRAND_ALIASES)."""
+    variants = [core]
+    for pattern, replacement in BRAND_ALIASES:
+        if re.match(pattern, core.upper()):
+            variants.append(re.sub(pattern, replacement, core.upper()))
+    return variants
+
+
+def numbers_agree(channel_name, xml_id, index):
+    """An old match must carry the same channel numbers as the guide: 'SHOWTIME' is not 'Showtime 2', 'E4' is not
+    'E4+1'. Only single digits (and +1-style timeshifts) must agree; long numbers such as TV18 or CP24 are branding.
+    A matching callsign settles it; unknown guide names can't disagree."""
+    if any(c not in FEED_WORDS and c in xml_id.upper() for c in CALLSIGN_IN_NAME.findall(channel_name)):
+        return True
+    names = index.get(xml_id)
+    if not names:
+        return True
+    wanted = channel_numbers(channel_name)
+    return any(all(len(n.lstrip("+")) > 1 for n in wanted ^ channel_numbers(name)) for name in names)
+
+
+NUMBER_WORDS = {"ONE": "1", "TWO": "2", "THREE": "3", "FOUR": "4", "FIVE": "5", "SIX": "6", "SEVEN": "7", "EIGHT": "8",
+                "NINE": "9", "TEN": "10"}
+
+
+def channel_numbers(text):
+    """Numbers in a name, glued or not ('OMNI2' -> {'2'}, 'CTV Two' -> {'2'}). 'Ch.5' labels don't count, and a plain
+    '1' is the channel itself ('Sky Arts 1') - but a timeshift is kept as '+1'."""
+    core = re.sub(r"\bCH\s*\d+\b", " ", normalize_name(text).split("|", 1)[1])
+    tokens = [NUMBER_WORDS.get(t, t) for t in core.split()]
+    numbers = set()
+    for i, token in enumerate(tokens):
+        after_plus = i > 0 and tokens[i - 1] == "PLUS"
+        for run in re.findall(r"\d+", token):
+            if after_plus:
+                numbers.add("+" + run)
+            elif run != "1":
+                numbers.add(run)
+    return numbers
 
 
 @dataclass
@@ -379,7 +448,8 @@ def resolve(names, known, no_guide, by_name, valid_ids, provider_ids=None, rejec
             if xml_id not in valid_ids or xml_id in refused:
                 return False
             return trusted or (not flag_reasons(name, xml_id, expected.get(name), id_countries.get(xml_id))
-                               and (index is None or resembles(name, xml_id, index)))
+                               and (index is None or (resembles(name, xml_id, index)
+                                                      and numbers_agree(name, xml_id, index))))
 
         old = legacy.get(name)
         rename = renames_known.get(name) or renames_legacy.get(name)

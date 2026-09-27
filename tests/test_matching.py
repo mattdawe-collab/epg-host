@@ -151,7 +151,7 @@ def test_decorations_are_ignored():
 
 
 def test_feed_words_are_not_callsigns():
-    assert matching.extract_core_name("US: NBC SYFY (WEST)") == "NBC SYFY"
+    assert matching.extract_core_name("US: NBC SYFY (WEST)") == "NBC SYFY WEST"
 
 
 def auto(name, by_name, index=None, expected_country=None):
@@ -316,3 +316,90 @@ def test_bare_callsign_with_a_subchannel_suffix_needs_that_subchannel():
     assert matching.station_match("TV: ST. LOUIS, MO KMOV-D2 ABC 30 A3 HD", matching.Stations(ids)) is None
     ids = {"KMOV-DT.us_locals1", "KMOV-DT2.us_locals1"}
     assert matching.station_match("TV: ST. LOUIS, MO KMOV-D2 ABC 30 A3 HD", matching.Stations(ids)) == "KMOV-DT2.us_locals1"
+
+
+MOVIE_INDEX = {
+    "Paramount+.with.Showtime.HD.us2": ["Paramount+ with Showtime HD"],
+    "Paramount+.with.Showtime.HD.(Pacific).us2": ["Paramount+ with Showtime HD (Pacific)"],
+    "Showtime.2.HD.us2": ["Showtime 2 HD"],
+    "Cinemax.HD.us2": ["Cinemax HD"], "Cinemax.HD.(Pacific).us2": ["Cinemax HD (Pacific)"],
+    "HBO.East.us2": ["HBO East"], "HBO.West.us2": ["HBO West"],
+    "Turner.Classic.Movies.HD.us2": ["Turner Classic Movies HD"], "LMN.HD.us2": ["LMN HD"],
+    "MGM+.HD.us2": ["MGM+ HD"], "MGM+.Hits.HD.us2": ["MGM+ Hits HD"], "MGM+.Marquee.HD.us2": ["MGM+ Marquee HD"],
+    "SundanceTV.HD.us2": ["SundanceTV HD"], "Sky.Action.HD.uk": ["Sky Action HD"], "Sky.Premiere.uk": ["Sky Premiere"],
+    "Sky.Cinema.Select.uk": ["Sky Cinema Select"],
+}
+
+
+def movie(name):
+    return matching.quick_match(name, matching.Pools({}, MOVIE_INDEX))
+
+
+def test_east_is_the_default_feed_and_pacific_is_west():
+    assert movie("TV: PARAMOUNT+ WITH SHOWTIME EAST ᴿᴬᵂ") == "Paramount+.with.Showtime.HD.us2"
+    assert movie("AT&T: CINEMAX WEST ᴿᴬᵂ") == "Cinemax.HD.(Pacific).us2"
+    assert movie("US: CINEMAX HD") == "Cinemax.HD.us2"
+    assert movie("US: HBO HD") == "HBO.East.us2"
+    assert movie("US: HBO WEST HD") == "HBO.West.us2"
+
+
+def test_rebrands_and_short_names():
+    assert movie("US: TCM HD") == "Turner.Classic.Movies.HD.us2"
+    assert movie("US: LIFETIME MOVIE NETWORK HD") == "LMN.HD.us2"
+    assert movie("US: EPIX HD") == "MGM+.HD.us2"
+    assert movie("US: EPIX 2") == "MGM+.Hits.HD.us2"
+    assert movie("US: EPIX HITS") == "MGM+.Marquee.HD.us2"
+    assert movie("US: SHOWTIME HD") == "Paramount+.with.Showtime.HD.us2"
+    assert movie("AT&T: SUNDANCE ᴿᴬᵂ") == "SundanceTV.HD.us2"
+    assert movie("UK: SKY CINEMA ACTION HEVC HD") == "Sky.Action.HD.uk"
+    assert movie("UK: SKY CINEMA PREMIER HEVC 4K") == "Sky.Premiere.uk"
+    assert movie("UK: SKY CINEMA SELECT") == "Sky.Cinema.Select.uk"
+
+
+def test_old_matches_must_agree_on_channel_numbers():
+    assert not matching.numbers_agree("US: SHOWTIME HD", "Showtime.2.HD.us2", MOVIE_INDEX)
+    assert matching.numbers_agree("US: SHOWTIME 2 HD", "Showtime.2.HD.us2", MOVIE_INDEX)
+    assert matching.numbers_agree("US: NBC 5 (KING) SEATTLE", "KING-DT.us_locals1", {"KING-DT.us_locals1": ["KING-DT"]})
+    assert matching.numbers_agree("UK: E4 +1", "E4+1.uk", {"E4+1.uk": ["E4+1"]})
+    res = matching.resolve(["US: SHOWTIME HD"], {}, {}, {}, set(MOVIE_INDEX),
+                           legacy={"US| SHOWTIME HD": "Showtime.2.HD.us2"}, index=MOVIE_INDEX)
+    assert res.matches == {"US: SHOWTIME HD": "Paramount+.with.Showtime.HD.us2"}
+
+
+def test_numbered_streaming_loops_get_no_guide():
+    assert matching.NO_GUIDE_PATTERN.search("US: HBO MAX ORIGINAL 11 ᴿᴬᵂ")
+    assert matching.NO_GUIDE_PATTERN.search("UK: NETFLIX SERIES 10 ᴿᴬᵂ")
+    assert not matching.NO_GUIDE_PATTERN.search("US: HBO 2 HD")
+
+
+def test_numbers_agree_ignores_channel_labels_number_words_and_a_plain_1():
+    def agree(name, xml_id, display):
+        return matching.numbers_agree(name, xml_id, {xml_id: [display]})
+    assert agree("CA EN: CTV Sudbury HD", "MCTV/CTV.Sudbury.Ch.5.ca2", "MCTV/CTV Sudbury Ch.5")
+    assert agree("CA: CTV 2 OTTAWA", "CTV.Two.-.Ottawa.ca2", "CTV Two - Ottawa")
+    assert agree("CA FR: SUPER ECRAN 1", "Super.Écran.HD.ca2", "Super Écran HD")
+    assert agree("ENGLISH: CNBC PRIME", "CNBC.TV18.Prime.HD.in", "CNBC TV18 Prime HD")
+    assert not agree("UK: E4", "E4+1.uk", "E4+1")
+    assert not agree("US: SHOWTIME HD", "Showtime.2.HD.us2", "Showtime 2 HD")
+
+
+def test_channel_label_rule_only_strips_whole_ch_labels():
+    assert matching.channel_numbers("US: NFL MATCH 5") == {"5"}
+    assert matching.channel_numbers("MCTV/CTV Sudbury Ch.5") == set()
+
+
+def test_numbers_glued_to_names_still_agree():
+    def agree(name, xml_id, display):
+        return matching.numbers_agree(name, xml_id, {xml_id: [display]})
+    assert agree("CA: OMNI 2", "OMNI2.HD.ca2", "OMNI2 HD")
+    assert agree("UK: ITV 3 HD ◉", "ITV3.HD.uk", "ITV3 HD")
+    assert agree("UK: ITV 3+1 ◉", "ITV3+1.uk", "ITV3+1")
+    assert agree("UK: BBC RADIO 4 ᴿᴬᵂ", "BBC.R4.FM.uk", "BBC R4 FM")
+    assert agree("CA: CP24 HD", "Cable.Pulse.24.(CP24).HD.ca2", "Cable Pulse 24 (CP24) HD")
+    assert not agree("UK: KARAOKE 4", "Karaoke.distro", "Karaoke")
+    assert not agree("UK: ITV 3 HD", "ITV2.HD.uk", "ITV2 HD")
+
+
+def test_east_in_a_place_name_is_kept():
+    assert matching.normalize_name("UK: BBC ONE SOUTH EAST") != matching.normalize_name("UK: BBC ONE SOUTH")
+    assert matching.normalize_name("US: HBO EAST") == matching.normalize_name("US| HBO")
