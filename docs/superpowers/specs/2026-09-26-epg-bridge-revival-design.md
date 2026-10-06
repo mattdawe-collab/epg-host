@@ -178,7 +178,15 @@ Since about 2026-09-30, every scripted request to the provider gets **HTTP 403 f
 
 - `provider.fetch_channels` raises `ProviderBlocked` (a kind of `ProviderUnavailable`) on 403, without retrying.
 - `main.py` then builds from last night's channel list, labelled "(provider blocks automated access)". These nights still count in `stale_nights`, but **never escalate** to a failed run, because no login change can fix them. A rejected login (513), an empty channel list, or other unavailability lasting 3 nights still fail loudly.
-- **Consequence:** the guide stays fresh, but provider renames after 2026-09-29 aren't followed automatically. If channels lose their guide after a rename, the channel list has to come from somewhere the provider allows. One option is an M3U playlist the user downloads in a browser, converted into `channels.json`; it isn't built yet.
+- **Consequence:** the guide stays fresh, but provider renames after 2026-09-29 aren't followed automatically. If channels lose their guide after a rename, the channel list has to come from somewhere the provider allows. That's the playlist import below.
+
+### Playlist import (added 2026-10-05)
+
+- `tools/import_playlist.py`, run by the user on the PC. With no file given, it uses a playlist saved to Downloads in the last 24 hours, or opens `get.php?type=m3u_plus` in the user's default browser with the `.env` login and waits up to 10 minutes for the download. A human passing Cloudflare in their own browser is the access the provider allows; nothing is spoofed.
+- It reads `#EXTINF` lines only: the display name (commas allowed), `tvg-id` and `group-title`. Stream links and logos are dropped, and `/movie/` and `/series/` entries are skipped. It keeps priority-group channels, plus a section header only when its section still has one. A saved web page (a protection page) and a file with no channels are refused. Output that contains the server, username or password is refused before anything is written.
+- Output: `data/channels_import.json`, `{"imported_at": date, "channels": [{name, epg_id, group}]}`, one channel per line. It's committed to `code`, pushed, and a `workflow_dispatch` run with `publish=true` starts.
+- `main.fallback_list`: when the provider can't be used, the import wins if `imported_at >= previous status.channel_list_date` (or that date is unknown). It brings its `tvg-id` hints as provider IDs, and expected countries from header blocks plus group changes (`with_sections`). Then last night's list, then saved names. `status.json` gains `channel_list_date`: today for a provider list, `imported_at` for an import, carried over otherwise. Labels read like "imported playlist from 2026-10-05 (provider blocks automated access)".
+- Verified 2026-10-05: a stand-in playlist built from the live 8,886-name list gave the same guide as the live one (3,815 channels, 97.6% fresh) with the provider returning 403.
 
 ## Scorecard (requested 2026-09-26)
 

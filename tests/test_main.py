@@ -161,3 +161,45 @@ def test_provider_blocking_scripts_is_not_an_alarm(env, monkeypatch):
     status = published(env, "status.json")
     assert status["channel_list"] == "last night's list (provider blocks automated access)"
     assert status["stale_nights"] == 8
+
+
+def test_imported_playlist_is_used_when_the_provider_blocks_scripts(env, monkeypatch):
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    write_data(env, {"US| CNN HD": "CNN.us"})
+    (env / "data" / "channels_import.json").write_text(json.dumps({"imported_at": "2026-10-05", "channels": [
+        {"name": "##### NEWS #####", "epg_id": None, "group": "US"},
+        {"name": "US: CNN HD", "epg_id": "CNN.us", "group": "US"}]}), encoding="utf-8")
+
+    def blocked(*a, **k):
+        raise provider.ProviderBlocked("HTTP 403")
+
+    monkeypatch.setattr(main.provider, "fetch_channels", blocked)
+    assert run(env) == 0
+    status = published(env, "status.json")
+    assert status["channel_list"] == "imported playlist from 2026-10-05 (provider blocks automated access)"
+    assert published(env, "channels.json") == ["US: CNN HD"]
+    assert published(env, "matches.json")["US: CNN HD"]["id"] == "CNN.us"
+
+
+def test_fallback_prefers_whichever_list_is_newer():
+    imported = {"imported_at": "2026-10-05", "channels": [
+        {"name": "##### NEWS #####", "epg_id": None, "group": "US"},
+        {"name": "US: CNN HD", "epg_id": "CNN.us", "group": "US"}, {"name": "US: FOX NEWS", "epg_id": None, "group": "US"},
+        {"name": "US: KTVI", "epg_id": "KTVI.us", "group": "US"}]}
+    names, ids, expected, label, date = main.fallback_list([], ["US: OLD"], imported, "2026-09-29")
+    assert names == ["US: CNN HD", "US: FOX NEWS", "US: KTVI"] and label == "imported playlist from 2026-10-05"
+    assert ids == {"US: CNN HD": "CNN.us", "US: KTVI": "KTVI.us"} and expected["US: FOX NEWS"] == "us" and date == "2026-10-05"
+    assert main.fallback_list([], ["US: OLD"], imported, "2026-10-05")[3] == "imported playlist from 2026-10-05"
+    assert main.fallback_list([], ["US: OLD"], imported, "2026-10-06")[:5:4] == (["US: OLD"], "2026-10-06")
+    assert main.fallback_list(["US| A"], None, None, None)[3] == "saved matches"
+
+
+def test_a_working_provider_dates_the_list_and_outranks_older_imports(env, monkeypatch):
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    write_data(env, {})
+    (env / "data" / "channels_import.json").write_text(json.dumps({"imported_at": "2000-01-01", "channels": [
+        {"name": "US: OLD", "epg_id": None, "group": "US"}]}), encoding="utf-8")
+    monkeypatch.setattr(main.provider, "fetch_channels", lambda *a, **k: [{"name": "US: CNN HD", "epg_id": "CNN.us"}])
+    assert run(env) == 0
+    status = published(env, "status.json")
+    assert status["channel_list"] == "provider" and status["channel_list_date"] == datetime.now(timezone.utc).date().isoformat()

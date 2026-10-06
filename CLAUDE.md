@@ -20,7 +20,10 @@ This project builds the TV guide (XMLTV) that TiviMate uses for the user's IPTV 
 - Pay-per-view, event, replay, loop and 24/7 channels are settled as "no guide" automatically and left out of coverage.
 
 ## Provider access (since 2026-09-30)
-The provider sits behind Cloudflare bot protection: scripted requests get HTTP 403, from GitHub and from the PC alike. The nightly build reuses the last channel list it saw (from 2026-09-29) and says so in `status.json`. Don't try to get around the protection (no fake browser headers, no proxies). If channel names change, ask the user for a playlist export they download themselves.
+The provider sits behind Cloudflare bot protection: scripted requests get HTTP 403, from GitHub and from the PC alike. Don't try to get around the protection (no fake browser headers, no proxies).
+- While blocked, the nightly build uses `data/channels_import.json` when it's at least as new as last night's list (`status.json` → `channel_list_date`), otherwise last night's list.
+- `channels_import.json` is written by `tools/import_playlist.py`, which the user runs on the PC. It opens the playlist link in their own browser using the saved `.env` login, waits for the download, keeps only names / `tvg-id` / groups for the priority groups, refuses to write anything containing the login, then commits, pushes and starts a publish run.
+- If channels lose their guide after a rename, ask the user to run `venv\Scripts\python tools\import_playlist.py`. Never run its browser step yourself (it uses the password), and never commit a raw `.m3u` file.
 
 ## Hard rules
 - No AI or LLM API calls in this project: not Gemini, OpenAI, Anthropic or anything else. It was shut down once for burning API credits. You do the matching and auditing yourself, in the session.

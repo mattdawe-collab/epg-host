@@ -16,6 +16,12 @@ data/epg_repair.xml
 data/epg_repair.xml.gz
 data/playlist_cache.json
 
+# Raw playlists contain the login in every stream link
+*.m3u
+*.m3u8
+get.php*
+*.part
+
 # Matching-session scratch files
 suggested_matches.json
 decisions*.json

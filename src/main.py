@@ -46,34 +46,65 @@ def load_json(path, default):
         return json.load(f)
 
 
-def get_channel_list(mode, known, previous_channels):
-    """Return (names, provider_ids, expected_countries, description, login_problem). `known` holds every saved name."""
+def with_sections(channels):
+    """Imported playlist entries with a '#' section marker wherever the playlist group changes, so
+    expected_countries can use the groups as well as the playlist's own header channels."""
+    result, group = [], None
+    for channel in channels:
+        if channel.get("group") != group:
+            group = channel.get("group")
+            result.append({"name": f"# {group}", "epg_id": None})
+        result.append(channel)
+    return result
+
+
+def fallback_list(saved, previous_channels, imported, previous_date):
+    """(names, provider_ids, expected, label, list_date) when the provider can't be used: a playlist imported
+    on the PC (tools/import_playlist.py) unless last night's list is newer, then last night's list, then saved names."""
+    imported_at = (imported or {}).get("imported_at") or ""
+    if imported and imported.get("channels") and imported_at >= (previous_date or ""):
+        channels = with_sections(imported["channels"])
+        names = [c["name"] for c in channels if matching.is_priority_channel(c["name"])]
+        if names:
+            ids = {c["name"]: c["epg_id"] for c in channels if c.get("epg_id")}
+            return names, ids, matching.expected_countries(channels), f"imported playlist from {imported_at}", imported_at
+    if previous_channels:
+        return previous_channels, {}, {}, "last night's list", previous_date
+    return saved, {}, {}, "saved matches", None
+
+
+def get_channel_list(mode, known, previous_channels, imported=None, previous_date=None, today=None):
+    """Return (names, provider_ids, expected_countries, description, login_problem, list_date).
+    `known` holds every saved name; list_date is when the list was last taken from the provider or a playlist."""
     saved = [n for n in known if not n.startswith("#") and matching.is_priority_channel(n)]
     if mode == "known":
-        return saved, {}, {}, "saved matches", None
-    fallback = previous_channels or saved
-    label = "last night's list" if previous_channels else "saved matches"
+        return saved, {}, {}, "saved matches", None, None
+    names, ids, expected, label, list_date = fallback_list(saved, previous_channels, imported, previous_date)
+
+    def fallback(reason, problem=None):
+        return names, ids, expected, f"{label} ({reason})", problem, list_date
+
     url, user, password = (os.getenv(k, "").strip() for k in ("XC_URL", "XC_USERNAME", "XC_PASSWORD"))
     if not (url and user and password):
-        return fallback, {}, {}, f"{label} (login not configured)", f"The IPTV login is not configured - {LOGIN_HELP}."
+        return fallback("login not configured", f"The IPTV login is not configured - {LOGIN_HELP}.")
     try:
         channels = provider.fetch_channels(url, user, password)
     except provider.LoginRejected as e:
-        return fallback, {}, {}, f"{label} (login rejected)", (
+        return fallback("login rejected", (
             f"The provider rejected the IPTV login ({e}). If the same login works on the PC, the provider "
-            f"is blocking GitHub; otherwise {LOGIN_HELP}.")
+            f"is blocking GitHub; otherwise {LOGIN_HELP}."))
     except provider.ProviderBlocked as e:
         ui.warn(f"Provider blocks automated access ({e}) - using {label}")
-        return fallback, {}, {}, f"{label} (provider blocks automated access)", None
+        return fallback("provider blocks automated access")
     except provider.ProviderUnavailable as e:
         ui.warn(f"Provider unavailable ({e}) - using {label}")
-        return fallback, {}, {}, f"{label} (provider unavailable)", None
-    names = [c["name"] for c in channels if matching.is_priority_channel(c["name"])]
-    if not names:
-        return fallback, {}, {}, f"{label} (provider returned no channels)", (
-            f"The provider returned no channels - the account may have expired. Check it, then {LOGIN_HELP}.")
+        return fallback("provider unavailable")
+    fresh = [c["name"] for c in channels if matching.is_priority_channel(c["name"])]
+    if not fresh:
+        return fallback("provider returned no channels", (
+            f"The provider returned no channels - the account may have expired. Check it, then {LOGIN_HELP}."))
     provider_ids = {c["name"]: c["epg_id"] for c in channels if c["epg_id"]}
-    return names, provider_ids, matching.expected_countries(channels), "provider", None
+    return fresh, provider_ids, matching.expected_countries(channels), "provider", None, today
 
 
 def pct(value):
@@ -117,13 +148,16 @@ def main(argv=None):
     no_guide = load_json(os.path.join(args.data_dir, "no_guide.json"), {})
     rejected = load_json(os.path.join(args.data_dir, "rejected_matches.json"), {})
     audit_log = load_json(os.path.join(args.data_dir, "audit_log.json"), [])
+    imported = load_json(os.path.join(args.data_dir, "channels_import.json"), None)
     prev = args.previous_dir
     previous_channels = load_json(prev and os.path.join(prev, "channels.json"), None)
     previous_status = load_json(prev and os.path.join(prev, "status.json"), {})
     previous_history = load_json(prev and os.path.join(prev, "score_history.json"), [])
 
     ui.step(1, 5, "Channel list")
-    names, provider_ids, expected, list_source, login_problem = get_channel_list(args.channels_from, {**legacy, **known}, previous_channels)
+    names, provider_ids, expected, list_source, login_problem, list_date = get_channel_list(
+        args.channels_from, {**legacy, **known}, previous_channels, imported,
+        previous_status.get("channel_list_date"), now.date().isoformat())
     unwritable = [n for n in names if NOT_XML_SAFE.search(n)]
     if unwritable:
         ui.warn(f"Skipping {len(unwritable)} channel name(s) with characters XML cannot hold")
@@ -165,6 +199,7 @@ def main(argv=None):
     status = {
         "generated_at": now.isoformat(timespec="seconds"),
         "channel_list": list_source,
+        "channel_list_date": list_date,
         "stale_nights": stale_nights,
         "channels": stats.channels,
         "programmes": stats.programmes,
