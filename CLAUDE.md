@@ -22,7 +22,7 @@ This project builds the TV guide (XMLTV) that TiviMate uses for the user's IPTV 
 ## Provider access (since 2026-09-30)
 The provider sits behind Cloudflare bot protection: scripted requests get HTTP 403, from GitHub and from the PC alike. Don't try to get around the protection (no fake browser headers, no proxies).
 - While blocked, the nightly build uses `data/channels_import.json` when it's at least as new as last night's list (`status.json` → `channel_list_date`), otherwise last night's list.
-- `channels_import.json` is written by `tools/import_playlist.py`, which the user runs on the PC. It opens the playlist link in their own browser using the saved `.env` login, waits for the download, keeps only names / `tvg-id` / groups for the priority groups, refuses to write anything containing the login, then commits, pushes and starts a publish run.
+- `channels_import.json` is written by `tools/import_playlist.py`, which the user runs on the PC. It opens the provider's app-login channel list (`player_api.php?action=get_live_streams`, what TiviMate uses; the M3U `get.php` link returns an empty page for this provider) in their own browser using the saved `.env` login. The user presses Ctrl+S, Save; the tool watches Downloads plus Chrome/Edge's save folders (on this PC Chrome saves pages to `OneDrive\Documents\Work Folder`), keeps only names / epg ids / groups for the priority groups, refuses to write anything containing the login, then commits, pushes and starts a publish run.
 - If channels lose their guide after a rename, ask the user to run `venv\Scripts\python tools\import_playlist.py`. Never run its browser step yourself (it uses the password), and never commit a raw `.m3u` file.
 
 ## Hard rules

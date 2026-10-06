@@ -20,6 +20,7 @@ data/playlist_cache.json
 *.m3u
 *.m3u8
 get.php*
+player_api*
 *.part
 
 # Matching-session scratch files

@@ -84,12 +84,30 @@ def test_stale_channel_list_escalates_after_three_nights(env, monkeypatch):
     previous = env / "previous"
     previous.mkdir()
     (previous / "channels.json").write_text(json.dumps(["US| CNN HD"]), encoding="utf-8")
-    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 1}), encoding="utf-8")
+    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 1, "failing_nights": 1}),
+                                          encoding="utf-8")
     assert run(env, "--previous-dir", str(previous)) == 0
-    assert published(env, "status.json")["stale_nights"] == 2
-    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 2}), encoding="utf-8")
+    assert published(env, "status.json")["failing_nights"] == 2
+    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 2, "failing_nights": 2}),
+                                          encoding="utf-8")
     assert run(env, "--previous-dir", str(previous)) == 3
     assert published(env, "status.json")["stale_nights"] == 3
+
+
+def test_one_bad_night_after_many_blocked_nights_is_not_an_alarm(env, monkeypatch):
+    write_data(env, {"US| CNN HD": "CNN.us"})
+
+    def down(*a, **k):
+        raise provider.ProviderUnavailable("ReadTimeout")
+
+    monkeypatch.setattr(main.provider, "fetch_channels", down)
+    previous = env / "previous"
+    previous.mkdir()
+    (previous / "channels.json").write_text(json.dumps(["US| CNN HD"]), encoding="utf-8")
+    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 9}), encoding="utf-8")
+    assert run(env, "--previous-dir", str(previous)) == 0
+    status = published(env, "status.json")
+    assert status["stale_nights"] == 10 and status["failing_nights"] == 1
 
 
 def test_names_that_cannot_be_written_to_xml_are_dropped(env, monkeypatch):
@@ -160,7 +178,7 @@ def test_provider_blocking_scripts_is_not_an_alarm(env, monkeypatch):
     assert run(env, "--previous-dir", str(previous)) == 0
     status = published(env, "status.json")
     assert status["channel_list"] == "last night's list (provider blocks automated access)"
-    assert status["stale_nights"] == 8
+    assert status["stale_nights"] == 8 and status["failing_nights"] == 0
 
 
 def test_imported_playlist_is_used_when_the_provider_blocks_scripts(env, monkeypatch):

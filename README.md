@@ -10,7 +10,7 @@ Builds a merged XMLTV TV guide for an IPTV channel list, for TiviMate.
 - **Scorecard:** every run reports coverage, freshness, audited accuracy and flagged matches. See `status.json` and `score_history.json` on `main`, or the run summary.
 - **New channels and audits:** handled in a Claude Code session. See `CLAUDE.md`.
 - **Login changed?** Run `venv\Scripts\python tools\set_login.py`.
-- **Channels renamed or added?** Run `venv\Scripts\python tools\import_playlist.py`. The provider blocks scripts, so it opens your playlist download in your browser, keeps only channel names, guide IDs and groups (never the stream links, which contain your login), saves them to `data/channels_import.json`, pushes that and starts a rebuild.
+- **Channels renamed or added?** Run `venv\Scripts\python tools\import_playlist.py`. The provider blocks scripts, so it opens your channel list in Chrome; press Ctrl+S and Save. It keeps only channel names, guide IDs and groups (never stream links, which contain your login), saves them to `data/channels_import.json`, pushes that and starts a rebuild.
 
 ## Local setup
 

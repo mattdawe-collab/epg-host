@@ -166,8 +166,11 @@ def main(argv=None):
     stale = args.channels_from == "provider" and list_source != "provider"
     stale_nights = previous_status.get("stale_nights", 0) + 1 if stale else 0
     blocked = list_source.endswith("(provider blocks automated access)")
-    if stale_nights >= STALE_NIGHTS_LIMIT and not login_problem and not blocked:
-        login_problem = (f"The channel list has not been refreshed for {stale_nights} nights ({list_source}). "
+    # Only consecutive failures other than the Cloudflare block count towards the alarm: the block is the normal
+    # state since 2026-09-30, so one timeout after weeks of blocked nights mustn't look like a long outage.
+    failing_nights = previous_status.get("failing_nights", 0) + 1 if stale and not blocked else 0
+    if failing_nights >= STALE_NIGHTS_LIMIT and not login_problem:
+        login_problem = (f"The channel list has not been refreshed for {failing_nights} nights ({list_source}). "
                          f"If the same login works on the PC, the provider may be blocking GitHub.")
 
     ui.step(2, 5, "Guide sources")
@@ -201,6 +204,7 @@ def main(argv=None):
         "channel_list": list_source,
         "channel_list_date": list_date,
         "stale_nights": stale_nights,
+        "failing_nights": failing_nights,
         "channels": stats.channels,
         "programmes": stats.programmes,
         "channels_with_upcoming": stats.channels_with_upcoming,
