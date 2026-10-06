@@ -172,6 +172,14 @@ A focused pass on HBO, Showtime, Starz, Cinemax, MGM+, TCM, Sky Cinema and simil
 - **Fuzzy comparisons collapse runs of spaces**, so names left with gaps after removing HD/(Pacific) still compare cleanly.
 - **Build after the pass:** 3,814 channels, coverage 50.3%, fresh 96.7%.
 
+## Provider moved behind Cloudflare (found 2026-10-05)
+
+Since about 2026-09-30, every scripted request to the provider gets **HTTP 403 from Cloudflare**. That includes the home page with no login and a made-up login, from GitHub and from the PC alike. Player apps such as TiviMate still get through. The project doesn't try to get around bot protection.
+
+- `provider.fetch_channels` raises `ProviderBlocked` (a kind of `ProviderUnavailable`) on 403, without retrying.
+- `main.py` then builds from last night's channel list, labelled "(provider blocks automated access)". These nights still count in `stale_nights`, but **never escalate** to a failed run, because no login change can fix them. A rejected login (513), an empty channel list, or other unavailability lasting 3 nights still fail loudly.
+- **Consequence:** the guide stays fresh, but provider renames after 2026-09-29 aren't followed automatically. If channels lose their guide after a rename, the channel list has to come from somewhere the provider allows. One option is an M3U playlist the user downloads in a browser, converted into `channels.json`; it isn't built yet.
+
 ## Scorecard (requested 2026-09-26)
 
 Every nightly run scores the guide. The scores go in `status.json`, the run summary and `score_history.json` on `main`. The history is carried forward from last night's copy, keeping 365 days.

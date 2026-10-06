@@ -144,3 +144,20 @@ def test_expected_country_from_the_playlist_steers_matching(env, monkeypatch):
     matches = published(env, "matches.json")
     assert "TV: BBC ONE" not in matches  # only a .uk guide exists, but the playlist says this channel is Spanish
     assert matches["US: CNN HD"]["id"] == "CNN.us"
+
+
+def test_provider_blocking_scripts_is_not_an_alarm(env, monkeypatch):
+    write_data(env, {"US| CNN HD": "CNN.us"})
+
+    def blocked(*a, **k):
+        raise provider.ProviderBlocked("HTTP 403")
+
+    monkeypatch.setattr(main.provider, "fetch_channels", blocked)
+    previous = env / "previous"
+    previous.mkdir()
+    (previous / "channels.json").write_text(json.dumps(["US| CNN HD"]), encoding="utf-8")
+    (previous / "status.json").write_text(json.dumps({"channels": 1, "stale_nights": 7}), encoding="utf-8")
+    assert run(env, "--previous-dir", str(previous)) == 0
+    status = published(env, "status.json")
+    assert status["channel_list"] == "last night's list (provider blocks automated access)"
+    assert status["stale_nights"] == 8

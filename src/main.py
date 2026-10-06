@@ -62,6 +62,9 @@ def get_channel_list(mode, known, previous_channels):
         return fallback, {}, {}, f"{label} (login rejected)", (
             f"The provider rejected the IPTV login ({e}). If the same login works on the PC, the provider "
             f"is blocking GitHub; otherwise {LOGIN_HELP}.")
+    except provider.ProviderBlocked as e:
+        ui.warn(f"Provider blocks automated access ({e}) - using {label}")
+        return fallback, {}, {}, f"{label} (provider blocks automated access)", None
     except provider.ProviderUnavailable as e:
         ui.warn(f"Provider unavailable ({e}) - using {label}")
         return fallback, {}, {}, f"{label} (provider unavailable)", None
@@ -128,7 +131,8 @@ def main(argv=None):
     ui.info(f"{len(names):,} channels from {list_source}")
     stale = args.channels_from == "provider" and list_source != "provider"
     stale_nights = previous_status.get("stale_nights", 0) + 1 if stale else 0
-    if stale_nights >= STALE_NIGHTS_LIMIT and not login_problem:
+    blocked = list_source.endswith("(provider blocks automated access)")
+    if stale_nights >= STALE_NIGHTS_LIMIT and not login_problem and not blocked:
         login_problem = (f"The channel list has not been refreshed for {stale_nights} nights ({list_source}). "
                          f"If the same login works on the PC, the provider may be blocking GitHub.")
 

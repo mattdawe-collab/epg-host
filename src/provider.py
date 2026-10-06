@@ -14,6 +14,11 @@ class ProviderUnavailable(Exception):
     """The provider could not be reached or sent something unusable."""
 
 
+class ProviderBlocked(ProviderUnavailable):
+    """HTTP 403: the provider's protection (Cloudflare since 2026-09-30) turns away scripted requests outright.
+    Retrying or re-entering the login doesn't help, so it's reported, not escalated."""
+
+
 def redact(text, secrets):
     """Drop query strings, then every raw and URL-encoded form of each secret. Logs are public."""
     text = re.sub(r"\?[^\s'\"()]*", "?***", text)
@@ -42,6 +47,8 @@ def fetch_channels(url, username, password, timeout=60, attempts=3, sleep=time.s
             continue
         if response.status_code == 513:
             raise LoginRejected("HTTP 513")
+        if response.status_code == 403:
+            raise ProviderBlocked("HTTP 403")
         if response.status_code != 200:
             problem = f"HTTP {response.status_code}"
             continue

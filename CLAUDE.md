@@ -19,6 +19,9 @@ This project builds the TV guide (XMLTV) that TiviMate uses for the user's IPTV 
 - `data/no_guide.json`, `data/rejected_matches.json` and `data/audit_log.json`: session decisions and the audit history that drives the Accuracy score.
 - Pay-per-view, event, replay, loop and 24/7 channels are settled as "no guide" automatically and left out of coverage.
 
+## Provider access (since 2026-09-30)
+The provider sits behind Cloudflare bot protection: scripted requests get HTTP 403, from GitHub and from the PC alike. The nightly build reuses the last channel list it saw (from 2026-09-29) and says so in `status.json`. Don't try to get around the protection (no fake browser headers, no proxies). If channel names change, ask the user for a playlist export they download themselves.
+
 ## Hard rules
 - No AI or LLM API calls in this project: not Gemini, OpenAI, Anthropic or anything else. It was shut down once for burning API credits. You do the matching and auditing yourself, in the session.
 - Never type, paste or store the IPTV password. If the login changes, the user runs `venv\Scripts\python tools\set_login.py`.

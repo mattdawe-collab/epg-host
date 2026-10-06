@@ -109,3 +109,12 @@ def test_non_list_json_is_unavailable(monkeypatch):
 
 def test_redact_replaces_longest_secrets_first():
     assert provider.redact("http://host.example host.example u1 pw", ["u1", "pw", "http://host.example", "host.example", ""]) == "*** *** *** ***"
+
+
+def test_http_403_means_the_provider_blocks_scripts(monkeypatch):
+    get, calls = fake_get([FakeResponse(403)])
+    monkeypatch.setattr(provider.requests, "get", get)
+    with pytest.raises(provider.ProviderBlocked, match="403"):
+        provider.fetch_channels("http://h", "u", "p", sleep=no_sleep)
+    assert len(calls) == 1
+    assert issubclass(provider.ProviderBlocked, provider.ProviderUnavailable)
