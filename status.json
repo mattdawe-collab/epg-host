@@ -1,0 +1,47 @@
+{
+ "generated_at": "2026-10-10T14:55:28+00:00",
+ "channel_list": "last night's list (provider blocks automated access)",
+ "channel_list_date": null,
+ "stale_nights": 11,
+ "failing_nights": 0,
+ "channels": 3813,
+ "programmes": 380364,
+ "channels_with_upcoming": 3726,
+ "size_mb": 21.3,
+ "days_ahead": 8.0,
+ "counts": {
+  "queued": 3774,
+  "no_guide_auto": 1299,
+  "auto": 828,
+  "carried": 1681,
+  "station": 1304
+ },
+ "score": {
+  "coverage": 0.5026,
+  "fresh": 0.9772,
+  "accuracy": null,
+  "audited": 0,
+  "headline": 0.4911,
+  "headline_basis": "unaudited",
+  "flagged": 0,
+  "flag_examples": {}
+ },
+ "added_count": 0,
+ "added": [],
+ "removed_count": 0,
+ "removed": [],
+ "sources": {
+  "all_sources.xml.gz": "downloaded",
+  "us_locals.xml.gz": "downloaded",
+  "us_sports.xml.gz": "downloaded",
+  "epg_uk_pw.xml.gz": "downloaded",
+  "epg_uk_ripper.xml.gz": "downloaded",
+  "epg_canada_pw.xml.gz": "downloaded",
+  "globetv_canada1.xml.gz": "downloaded",
+  "globetv_canada2.xml.gz": "downloaded",
+  "globetv_canada3.xml.gz": "downloaded"
+ },
+ "skipped_duplicate_programmes": 97509,
+ "skipped_out_of_window_programmes": 33035,
+ "elapsed_minutes": 2.4
+}
