@@ -11,6 +11,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
+import backup
 import checks
 import console_ui as ui
 import epg_cache
@@ -132,6 +133,8 @@ def write_step_summary(status, problems, login_problem):
         f"{counts.get('no_guide', 0) + counts.get('no_guide_auto', 0):,})",
         f"- Added / removed since last night: {status['added_count']:,} / {status['removed_count']:,}",
         "- Sources: " + ", ".join(f"{k} {v}" for k, v in status["sources"].items()),
+        f"- Filled from the backup (own listings ran out): {status['backup']['channels_filled']:,} channels; "
+        "backups: " + ", ".join(f"{k} {v}" for k, v in status["backup"]["sources"].items()),
     ]
     with open(path, "a", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -175,6 +178,8 @@ def main(argv=None):
 
     ui.step(2, 5, "Guide sources")
     ref = epg_cache.fetch_reference_data(epg_cache.SOURCES, args.cache_dir, args.cache_max_age)
+    ui.info("Backup sources (used only for channels whose own listings run out)")
+    backups_loaded, backup_status = backup.fetch(args.cache_dir, args.cache_max_age)
 
     ui.step(3, 5, "Matching (no AI)")
     result = matching.resolve(names, known, no_guide, ref.by_name, ref.valid_ids, provider_ids, rejected, legacy,
@@ -184,13 +189,19 @@ def main(argv=None):
     ui.step(4, 5, "Building guide")
     build_path = os.path.join(args.cache_dir, "guide_build.xml.gz")
     days = args.days_ahead
-    stats = guide.write_guide(build_path, result.matches, ref.paths, now, days_ahead=days)
+    networks = {}
+    for name, xml_id in result.matches.items():
+        networks.setdefault(xml_id, set()).update(backup.networks_in([name]))
+    twins, twinned = backup.plan(set(result.matches.values()), ref.index, backups_loaded, networks)
+    stats = guide.write_guide(build_path, result.matches, ref.paths, now, days_ahead=days, backups=twins)
     size = os.path.getsize(build_path)
     if size > checks.MAX_BYTES and days > TRIM_DAYS:
         ui.warn(f"Guide is {size / 1048576:.0f} MB - trimming to {TRIM_DAYS:g} days ahead")
         days = TRIM_DAYS
-        stats = guide.write_guide(build_path, result.matches, ref.paths, now, days_ahead=days)
+        stats = guide.write_guide(build_path, result.matches, ref.paths, now, days_ahead=days, backups=twins)
         size = os.path.getsize(build_path)
+    if stats.bridged_channels:
+        ui.warn(f"{stats.bridged_channels:,} channels ran out of listings in their own guide - filled from the backup")
 
     settled = result.counts["no_guide"] + result.counts["no_guide_auto"]
     card = score.scorecard(len(names), result.matches, stats, audit_log, settled_no_guide=settled, expected=expected,
@@ -216,6 +227,8 @@ def main(argv=None):
         "added_count": len(added), "added": added[:100],
         "removed_count": len(removed), "removed": removed[:100],
         "sources": ref.source_status,
+        "backup": {"sources": backup_status, "guide_ids_with_twin": twinned,
+                   "channels_filled": stats.bridged_channels},
         "skipped_duplicate_programmes": stats.skipped_duplicates,
         "skipped_out_of_window_programmes": stats.skipped_out_of_window,
         "elapsed_minutes": round((time.time() - started) / 60, 1),

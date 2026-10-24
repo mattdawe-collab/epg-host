@@ -19,6 +19,7 @@ def env(tmp_path, monkeypatch):
                  for i in ("CNN.us", "ESPN.us", "BBCOne.uk")],
                 names={"CNN.us": ["CNN"], "ESPN.us": ["ESPN"], "BBCOne.uk": ["BBC One"]})
     monkeypatch.setattr(epg_cache, "SOURCES", [("https://example.invalid/a.xml.gz", "a.xml.gz")])
+    monkeypatch.setattr(main.backup, "SOURCES", [])
     for key in ("XC_URL", "XC_USERNAME", "XC_PASSWORD"):
         monkeypatch.setenv(key, "x")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
@@ -221,3 +222,20 @@ def test_a_working_provider_dates_the_list_and_outranks_older_imports(env, monke
     assert run(env) == 0
     status = published(env, "status.json")
     assert status["channel_list"] == "provider" and status["channel_list_date"] == datetime.now(timezone.utc).date().isoformat()
+
+
+def test_frozen_main_source_is_filled_from_the_backup_and_publishes(env, monkeypatch):
+    """2026-10-24: epgshare01 stopped updating, every listing ran out and the build refused to publish."""
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    now = datetime.now(timezone.utc)
+    make_source(env / "cache" / "a.xml.gz", [("CNN.us", now - timedelta(days=2), now - timedelta(days=1), "Old")],
+                names={"CNN.us": ["CNN"]})
+    make_source(env / "cache" / "b.xml.gz", [("CNN.bk", now - timedelta(minutes=30), now + timedelta(hours=1), "New")],
+                names={"CNN.bk": ["US - CNN"]})
+    monkeypatch.setattr(main.backup, "SOURCES", [("https://example.invalid/b.xml.gz", "b.xml.gz", "us")])
+    write_data(env, {"US: CNN HD": "CNN.us"})
+    assert run(env, "--channels-from", "known") == 0
+    status = published(env, "status.json")
+    assert status["channels_with_upcoming"] == 1
+    assert status["backup"] == {"sources": {"b.xml.gz": "cached"}, "guide_ids_with_twin": 1, "channels_filled": 1}
+    assert published(env, "matches.json")["US: CNN HD"]["id"] == "CNN.us"

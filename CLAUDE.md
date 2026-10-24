@@ -13,6 +13,16 @@ This project builds the TV guide (XMLTV) that TiviMate uses for the user's IPTV 
   - `match_queue.json`: channels waiting to be matched
   - `score_history.json`: the scorecard over time
 
+## Backup guide (since 2026-10-24)
+epgshare01, the main source for almost every channel, stopped updating on 2026-10-21; by 10-24 three-quarters of the
+channels had nothing in the next 24 hours and the build refused to publish. `src/backup.py` adds iptv-epg.org's
+US / GB / CA files (free, daily) as backups. Each matched guide channel is paired with its twin in a backup by strict
+rules (same name once quality/filler words go, numbers, feeds and '+' agreeing; or the same callsign and
+sub-channel; never a name shared by two different backup channels, never a twin naming another network, never a
+name made only of generic words). A channel takes its twin's programmes only when its own listings end within
+24 hours, and only from where they end. Match decisions and channel IDs are untouched. `status.json` -> `backup`
+shows how many channels were filled. The globetvapp Canada files have not changed since 2025-12-31.
+
 ## Data files (on `code`)
 - `data/known_matches.json`: trusted decisions from Claude sessions, including matches confirmed in audits. They always win.
 - `data/legacy_matches.json`: old Gemini-era matches, keyed by the provider's old `|` names. Audits found about 40% of them wrong. They're used, or carried over to the new names, only when they pass the free checks (country, callsign, network).
