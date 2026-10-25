@@ -3,6 +3,8 @@ import gzip
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 from lxml import etree
@@ -32,12 +34,37 @@ class ReferenceData:
     source_status: dict = field(default_factory=dict)  # filename -> downloaded | cached | stale cache | failed
     paths: list = field(default_factory=list)          # readable source files, in source order
     id_country: dict = field(default_factory=dict)     # bare-number guide ID -> country of its source
+    source_updated: dict = field(default_factory=dict) # filename -> when the server last changed it (ISO) or None
 
 
 def get_cache_age_hours(path):
     if not os.path.exists(path):
         return float("inf")
     return (time.time() - os.path.getmtime(path)) / 3600
+
+
+def source_updated(path):
+    """When the server last changed this source file (ISO, UTC), as recorded at download; None when unknown."""
+    try:
+        with open(path + ".updated", encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def _record_updated(dest_path, last_modified):
+    """Keep the server's Last-Modified next to the file, so a source that stops updating can be spotted
+    (epgshare01 froze for three days in October 2026 before anyone noticed)."""
+    marker = dest_path + ".updated"
+    try:
+        moment = parsedate_to_datetime(last_modified).astimezone(timezone.utc) if last_modified else None
+    except (TypeError, ValueError):
+        moment = None
+    if moment:
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(moment.isoformat())
+    elif os.path.exists(marker):
+        os.remove(marker)
 
 
 def download_file(url, dest_path, timeout=120):
@@ -47,6 +74,7 @@ def download_file(url, dest_path, timeout=120):
         print(f"    Downloading {url}")
         with requests.get(url, timeout=timeout, stream=True) as response:
             response.raise_for_status()
+            last_modified = (getattr(response, "headers", None) or {}).get("Last-Modified")
             with open(tmp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1 << 16):
                     f.write(chunk)
@@ -54,6 +82,7 @@ def download_file(url, dest_path, timeout=120):
             if f.read(2) != b"\x1f\x8b":
                 raise ValueError("not a gzip file")
         os.replace(tmp_path, dest_path)
+        _record_updated(dest_path, last_modified)
         print(f"    [OK] {os.path.getsize(dest_path) / 1048576:.1f} MB")
         return True
     except Exception as e:
@@ -111,6 +140,7 @@ def fetch_reference_data(sources, cache_dir, cache_max_age_hours=24.0):
             ref.source_status[filename] = "failed"
             continue
         ref.source_status[filename] = status
+        ref.source_updated[filename] = source_updated(path)
         ref.paths.append(path)
         for name, channel_id in by_name.items():
             ref.by_name.setdefault(name, channel_id)

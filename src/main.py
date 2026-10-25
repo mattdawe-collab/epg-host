@@ -37,6 +37,8 @@ def parse_args(argv):
     p.add_argument("--cache-dir", default=os.path.join(ROOT, "data", "cache"))
     p.add_argument("--cache-max-age", type=float, default=float(os.getenv("CACHE_MAX_AGE", "24")))
     p.add_argument("--days-ahead", type=float, default=8.0)
+    p.add_argument("--report-file", help="where to leave tonight's report for the Telegram scorecard "
+                                         "(default: report.json in the cache folder)")
     return p.parse_args(argv)
 
 
@@ -140,6 +142,16 @@ def write_step_summary(status, problems, login_problem):
         f.write("\n".join(lines) + "\n")
 
 
+def write_report(path, published, problems, login_problem, previous_history, status):
+    """Every run, published or not, leaves this for src/telegram_report.py."""
+    last = (previous_history or [None])[-1]
+    report = {"published": published, "problems": problems, "login_problem": login_problem,
+              "last_night": {"date": last.get("date"), "fresh": last.get("fresh")} if last else None,
+              "status": status}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=1, ensure_ascii=False)
+
+
 def main(argv=None):
     args = parse_args(argv)
     started = time.time()
@@ -227,6 +239,8 @@ def main(argv=None):
         "added_count": len(added), "added": added[:100],
         "removed_count": len(removed), "removed": removed[:100],
         "sources": ref.source_status,
+        "source_updated": {**ref.source_updated,
+                           **{os.path.basename(path): epg_cache.source_updated(path) for _, path, _ in backups_loaded}},
         "backup": {"sources": backup_status, "guide_ids_with_twin": twinned,
                    "channels_filled": stats.bridged_channels},
         "skipped_duplicate_programmes": stats.skipped_duplicates,
@@ -239,6 +253,8 @@ def main(argv=None):
     ui.step(5, 5, "Checks")
     problems = checks.find_problems(stats, size, previous_status)
     write_step_summary(status, problems, login_problem)
+    write_report(args.report_file or os.path.join(args.cache_dir, "report.json"), not problems, problems,
+                 login_problem, previous_history, status)
     if problems:
         for p in problems:
             ui.error(p)

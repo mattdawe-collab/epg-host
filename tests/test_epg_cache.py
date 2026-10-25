@@ -116,3 +116,29 @@ def test_numeric_ids_from_single_country_sources_get_that_country(tmp_path, monk
     make_source(tmp_path / "epg_uk_pw.xml.gz", [prog("12084"), prog("BBCOne.uk")], names={"12084": ["Nickelodeon"]})
     ref = epg_cache.fetch_reference_data([("https://example.invalid/gb", "epg_uk_pw.xml.gz")], str(tmp_path), 24)
     assert ref.id_country == {"12084": "uk"}
+
+
+def test_download_records_when_the_server_last_updated_the_file(tmp_path, monkeypatch):
+    src = tmp_path / "src.xml.gz"
+    make_source(src, [prog("CNN.us")])
+    response = FakeDownload(src.read_bytes())
+    response.headers = {"Last-Modified": "Wed, 21 Oct 2026 16:39:17 GMT"}
+    monkeypatch.setattr(epg_cache.requests, "get", lambda *a, **k: response)
+    dest = tmp_path / "a.xml.gz"
+    assert epg_cache.download_file("https://example.invalid/a", str(dest)) is True
+    assert epg_cache.source_updated(str(dest)) == "2026-10-21T16:39:17+00:00"
+    response.headers = {}
+    assert epg_cache.download_file("https://example.invalid/a", str(dest)) is True
+    assert epg_cache.source_updated(str(dest)) is None  # never report an old date for a new file
+
+
+def test_fetch_reports_each_sources_update_time(tmp_path, monkeypatch):
+    def fake_download(url, dest, timeout=120):
+        make_source(dest, [prog("ESPN.us")], names={"ESPN.us": ["ESPN"]})
+        with open(dest + ".updated", "w") as f:
+            f.write("2026-10-24T22:40:35+00:00")
+        return True
+
+    monkeypatch.setattr(epg_cache, "download_file", fake_download)
+    ref = epg_cache.fetch_reference_data([("https://example.invalid/a", "a.xml.gz")], str(tmp_path), 24)
+    assert ref.source_updated == {"a.xml.gz": "2026-10-24T22:40:35+00:00"}

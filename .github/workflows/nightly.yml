@@ -76,6 +76,7 @@ jobs:
           retention-days: 3
 
       - name: Publish to main
+        id: publish
         if: env.PUBLISH == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,6 +88,18 @@ jobs:
           git add -A
           git commit -q -m "Guide $(date -u +%Y-%m-%d)"
           git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+
+      # One message per publishing run, sent even when the build fails. Set up with tools/set_telegram.py.
+      - name: Telegram scorecard
+        if: always() && env.PUBLISH == 'true'
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: >-
+          python src/telegram_report.py --report data/cache/report.json
+          --publish-outcome "${{ steps.publish.outcome }}"
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Fail loudly about the channel list
         if: steps.build.outputs.exit_code == '3'

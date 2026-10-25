@@ -239,3 +239,23 @@ def test_frozen_main_source_is_filled_from_the_backup_and_publishes(env, monkeyp
     assert status["channels_with_upcoming"] == 1
     assert status["backup"] == {"sources": {"b.xml.gz": "cached"}, "guide_ids_with_twin": 1, "channels_filled": 1}
     assert published(env, "matches.json")["US: CNN HD"]["id"] == "CNN.us"
+
+
+def test_every_run_leaves_a_report_for_the_telegram_scorecard(env, monkeypatch):
+    monkeypatch.setattr(main.checks, "FIRST_RUN_MIN_CHANNELS", 1)
+    write_data(env, {"US| CNN HD": "CNN.us"})
+    prev = env / "prev"
+    prev.mkdir()
+    (prev / "score_history.json").write_text(json.dumps([{"date": "2026-10-24", "fresh": 0.84}]), encoding="utf-8")
+    assert run(env, "--channels-from", "known", "--previous-dir", str(prev)) == 0
+    report = json.loads((env / "cache" / "report.json").read_text(encoding="utf-8"))
+    assert report["published"] is True and report["problems"] == []
+    assert report["last_night"] == {"date": "2026-10-24", "fresh": 0.84}
+    assert report["status"]["channels"] == 1 and "a.xml.gz" in report["status"]["source_updated"]
+
+
+def test_a_refused_build_still_leaves_a_report(env):
+    write_data(env, {})
+    assert run(env, "--channels-from", "known") == 2
+    report = json.loads((env / "cache" / "report.json").read_text(encoding="utf-8"))
+    assert report["published"] is False and report["problems"] == ["the guide has no channels"]
