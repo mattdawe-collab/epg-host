@@ -22,6 +22,16 @@ sub-channel; never a name shared by two different backup channels, never a twin 
 name made only of generic words). A channel takes its twin's programmes only when its own listings end within
 24 hours, and only from where they end. Match decisions and channel IDs are untouched. `status.json` -> `backup`
 shows how many channels were filled. The globetvapp Canada files have not changed since 2025-12-31.
+epgshare01 came back on 2026-10-24 22:40 UTC; with it fresh the backup fills only a few dozen channels a night.
+
+## Telegram scorecard (since 2026-10-24)
+Every publishing run (nightly or a manual publish) ends with one Telegram message from `src/telegram_report.py`,
+sent even when the build fails: published or not and why, channels with listings for the next 24 hours and the
+change since last night, channels filled from the backup, and any guide source whose file has not changed in
+36 hours (from the server's Last-Modified, kept next to each download as `<file>.updated`). The build leaves
+`data/cache/report.json` for it on every run. It needs the GitHub secrets `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID`, which the user sets with `venv\Scripts\python tools\set_telegram.py` (a new bot of its own,
+not HAL's). Never type or store the token yourself. Without the secrets it prints the message and sends nothing.
 
 ## Data files (on `code`)
 - `data/known_matches.json`: trusted decisions from Claude sessions, including matches confirmed in audits. They always win.
