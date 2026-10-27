@@ -142,3 +142,15 @@ def test_fetch_reports_each_sources_update_time(tmp_path, monkeypatch):
     monkeypatch.setattr(epg_cache, "download_file", fake_download)
     ref = epg_cache.fetch_reference_data([("https://example.invalid/a", "a.xml.gz")], str(tmp_path), 24)
     assert ref.source_updated == {"a.xml.gz": "2026-10-24T22:40:35+00:00"}
+
+
+def test_full_scan_finds_channels_listed_between_programmes(tmp_path):
+    root = etree.Element("tv")
+    etree.SubElement(etree.SubElement(root, "channel", id="A.us"), "display-name").text = "A"
+    etree.SubElement(root, "programme", start=xmltv_time(NOW), stop=xmltv_time(NOW), channel="A.us")
+    etree.SubElement(etree.SubElement(root, "channel", id="B.us"), "display-name").text = "B"
+    src = tmp_path / "mixed.xml.gz"
+    with gzip.open(src, "wb") as f:
+        f.write(etree.tostring(root))
+    _, ids, index = epg_cache.parse_epg_channels(str(src), full_scan=True)
+    assert ids == {"A.us", "B.us"} and index == {"A.us": ["A"], "B.us": ["B"]}

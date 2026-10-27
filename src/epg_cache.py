@@ -92,15 +92,21 @@ def download_file(url, dest_path, timeout=120):
         return False
 
 
-def parse_epg_channels(path):
-    """Read the <channel> list. XMLTV lists channels before programmes, so stop at the first programme."""
+def parse_epg_channels(path, full_scan=False):
+    """Read the <channel> list. XMLTV usually lists channels before programmes, so stop at the first programme -
+    unless full_scan: some guides (the Plex one) put each channel right before its own programmes."""
     by_name, ids, index = {}, set(), {}
     try:
         with gzip.open(path, "rb") as f:
             for _, elem in etree.iterparse(f, events=("end",), tag=("channel", "programme"),
                                            resolve_entities="internal", no_network=True):
                 if elem.tag == "programme":
-                    break
+                    if not full_scan:
+                        break
+                    elem.clear()
+                    while elem.getprevious() is not None:
+                        del elem.getparent()[0]
+                    continue
                 channel_id = (elem.get("id") or "").strip()
                 if channel_id:
                     ids.add(channel_id)

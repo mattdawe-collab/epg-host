@@ -23,6 +23,10 @@ name made only of generic words). A channel takes its twin's programmes only whe
 24 hours, and only from where they end. Match decisions and channel IDs are untouched. `status.json` -> `backup`
 shows how many channels were filled. The globetvapp Canada files have not changed since 2025-12-31.
 epgshare01 came back on 2026-10-24 22:40 UTC; with it fresh the backup fills only a few dozen channels a night.
+Since 2026-10-26 Plex channels (guide IDs ending `.plex`, ~700 channels) take their twin from Matt Huisman's US
+Plex guide (i.mjh.nz/Plex/us.xml.gz, plain names, read with a full scan because it lists each channel next to its
+own programmes). Replaying the outage on the frozen files: 2,405 -> 3,098 of 3,813 channels with listings; the two
+guides named the same show on 96.7% of 1,105 spot checks, the rest punctuation or a reshuffled schedule.
 
 ## Telegram scorecard (since 2026-10-24)
 Every publishing run (nightly or a manual publish) ends with one Telegram message from `src/telegram_report.py`,

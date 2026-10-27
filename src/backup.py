@@ -6,6 +6,9 @@ quality words and filler words go (numbers, feeds and '+' must agree), or the sa
 sub-channel. A name shared by two different backup channels is never guessed. guide.write_guide only uses a twin's
 programmes for a channel whose own listings end within the next 24 hours, and only after its own listings end.
 Match decisions are untouched: TiviMate keeps seeing the same channels.
+
+Plex channels (guide IDs ending in '.plex', about 700 of the user's channels) take their twin from Matt Huisman's
+US Plex guide (i.mjh.nz), which names each channel plainly ("Euronews"). Its kind is "plex" instead of a country.
 """
 import os
 import re
@@ -15,8 +18,11 @@ import epg_cache
 from matching import (FEED_WORDS, GENERIC_CORES, NETWORKS, NUMBER_WORDS, QUALITY_WORDS, country_of, fold_accents, normalize_feed,
                       strip_decorations)
 
-# (url, cache file, country). iptv-epg.org: free, updated daily, names in the form "US - CNN".
+# (url, cache file, country or "plex"), first backup wins. i.mjh.nz Plex: free, updated several times a day.
+# iptv-epg.org: free, updated daily, names in the form "US - CNN".
+PLEX = "plex"
 SOURCES = [
+    ("https://i.mjh.nz/Plex/us.xml.gz", "backup_plex_us.xml.gz", PLEX),
     ("https://iptv-epg.org/files/epg-us.xml.gz", "backup_us.xml.gz", "us"),
     ("https://iptv-epg.org/files/epg-gb.xml.gz", "backup_uk.xml.gz", "uk"),
     ("https://iptv-epg.org/files/epg-ca.xml.gz", "backup_ca.xml.gz", "ca"),
@@ -61,8 +67,13 @@ def _pick(ids):
 
 def _index_backup(country, names_by_id):
     """(name key, is plex) -> backup IDs, and (callsign, sub-channel) -> backup IDs; sub-channel 1 = main feed."""
-    tag = COUNTRY_TAGS[country]
     by_key, by_station = defaultdict(list), defaultdict(list)
+    if country == PLEX:  # every channel in the Plex guide is a Plex channel, named plainly
+        for backup_id, names in names_by_id.items():
+            for key in {name_key(PLEX_MARK.sub(" ", d or "")) for d in names} - {None}:
+                by_key[(key, True)].append(backup_id)
+        return by_key, by_station
+    tag = COUNTRY_TAGS[country]
     for backup_id, names in names_by_id.items():
         for display in names:
             match = BACKUP_TAG.match((display or "").strip())
@@ -98,7 +109,7 @@ def _bridge_one(primary_index, country, names_by_id, networks=None):
         return not (wanted and theirs) or bool(wanted & theirs)
 
     for xml_id, names in primary_index.items():
-        if primary_country(xml_id) != country:
+        if (not xml_id.endswith(".plex")) if country == PLEX else primary_country(xml_id) != country:
             continue
         station = LOCAL_ID.match(xml_id)
         if station:
@@ -144,7 +155,7 @@ def fetch(cache_dir, cache_max_age_hours=24.0, sources=None):
         if state == "failed":
             status[filename] = state
             continue
-        _, ids, index = epg_cache.parse_epg_channels(path)
+        _, ids, index = epg_cache.parse_epg_channels(path, full_scan=country == PLEX)
         if not ids:
             status[filename] = "failed"
             continue

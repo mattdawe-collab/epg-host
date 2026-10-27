@@ -127,3 +127,43 @@ def test_names_made_only_of_generic_words_are_never_bridged():
     found = bridge({"West.TV.us2": ["West TV"], "Movies.us2": ["Movies!"]},
                    {"WESTNetwork.us": ["US - WEST Network"], "Movies.us": ["US - MOVIES!"]})
     assert found == {}
+
+
+# --- the Plex guide (i.mjh.nz): plain names, one channel per name ------------------------------------------------
+
+PLEX_INDEX = {"6a16-aaa": ["Euronews"], "6a16-bbb": ["Z Nation"], "6a16-ccc": ["Z Nation"], "6a16-ddd": ["CNN"],
+              "6a16-eee": ["Law & Crime"]}
+
+
+def test_plex_guide_pairs_plex_channels_by_plain_name(tmp_path):
+    path = str(tmp_path / "plex.xml.gz")
+    primary = {"plex.tv.Euronews.plex": ["Euronews"], "plex.tv.Z.Nation.plex": ["Z Nation"], "CNN.us": ["CNN"],
+               "plex.tv.Law.&.Crime.plex": ["Law & Crime"]}
+    plan, count = backup.plan(set(primary), primary, [("plex", path, PLEX_INDEX)])
+    # two different Plex channels are both called Z Nation: not guessed; CNN.us is not a Plex channel
+    assert plan == [(path, {"6a16-aaa": ["plex.tv.Euronews.plex"], "6a16-eee": ["plex.tv.Law.&.Crime.plex"]})]
+    assert count == 2
+
+
+def test_plex_guide_comes_before_the_tagged_backup_for_plex_channels(tmp_path):
+    plex_path, us_path = str(tmp_path / "plex.xml.gz"), str(tmp_path / "us.xml.gz")
+    primary = {"plex.tv.Euronews.plex": ["Euronews"], "CNN.us2": ["CNN"]}
+    loaded = [("plex", plex_path, PLEX_INDEX),
+              ("us", us_path, {"Euronews_Plex.us": ["US - Euronews [Plex]"], "CNN.us": ["US - CNN"]})]
+    plan, count = backup.plan(set(primary), primary, loaded)
+    assert plan == [(plex_path, {"6a16-aaa": ["plex.tv.Euronews.plex"]}), (us_path, {"CNN.us": ["CNN.us2"]})]
+    assert count == 2
+
+
+def test_fetch_reads_every_channel_of_a_guide_that_mixes_channels_and_programmes(tmp_path):
+    import gzip
+    xml = ('<tv><channel id="a"><display-name>Euronews</display-name></channel>'
+           '<programme start="20261026000000 +0000" stop="20261026010000 +0000" channel="a"><title>x</title></programme>'
+           '<channel id="b"><display-name>BUZZR</display-name></channel>'
+           '<programme start="20261026000000 +0000" stop="20261026010000 +0000" channel="b"><title>y</title></programme>'
+           '</tv>')
+    with gzip.open(tmp_path / "plex.xml.gz", "wb") as f:
+        f.write(xml.encode())
+    loaded, status = backup.fetch(str(tmp_path), 9999, sources=[("https://example.invalid/p", "plex.xml.gz", "plex")])
+    assert status == {"plex.xml.gz": "cached"}
+    assert loaded[0][0] == "plex" and loaded[0][2] == {"a": ["Euronews"], "b": ["BUZZR"]}

@@ -20,6 +20,7 @@ SOURCE_NAMES = {
     "epg_uk_ripper.xml.gz": "epgshare01 UK",
     "epg_uk_pw.xml.gz": "epg.pw UK",
     "epg_canada_pw.xml.gz": "epg.pw Canada",
+    "backup_plex_us.xml.gz": "Plex guide (backup)",
     "backup_us.xml.gz": "iptv-epg.org US (backup)",
     "backup_uk.xml.gz": "iptv-epg.org UK (backup)",
     "backup_ca.xml.gz": "iptv-epg.org Canada (backup)",
