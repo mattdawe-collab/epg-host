@@ -1,0 +1,72 @@
+{
+ "generated_at": "2026-10-31T14:54:52+00:00",
+ "channel_list": "last night's list (provider blocks automated access)",
+ "channel_list_date": null,
+ "stale_nights": 34,
+ "failing_nights": 0,
+ "channels": 3826,
+ "programmes": 384518,
+ "channels_with_upcoming": 3780,
+ "size_mb": 21.7,
+ "days_ahead": 8.0,
+ "counts": {
+  "queued": 3761,
+  "no_guide_auto": 1299,
+  "auto": 841,
+  "carried": 1681,
+  "station": 1304
+ },
+ "score": {
+  "coverage": 0.5043,
+  "fresh": 0.988,
+  "accuracy": null,
+  "audited": 0,
+  "headline": 0.4982,
+  "headline_basis": "unaudited",
+  "flagged": 0,
+  "flag_examples": {}
+ },
+ "added_count": 0,
+ "added": [],
+ "removed_count": 0,
+ "removed": [],
+ "sources": {
+  "all_sources.xml.gz": "downloaded",
+  "us_locals.xml.gz": "downloaded",
+  "us_sports.xml.gz": "downloaded",
+  "epg_uk_pw.xml.gz": "downloaded",
+  "epg_uk_ripper.xml.gz": "downloaded",
+  "epg_canada_pw.xml.gz": "downloaded",
+  "globetv_canada1.xml.gz": "downloaded",
+  "globetv_canada2.xml.gz": "downloaded",
+  "globetv_canada3.xml.gz": "downloaded"
+ },
+ "source_updated": {
+  "all_sources.xml.gz": "2026-10-31T10:38:30+00:00",
+  "us_locals.xml.gz": "2026-10-31T10:38:57+00:00",
+  "us_sports.xml.gz": "2026-10-31T10:38:57+00:00",
+  "epg_uk_pw.xml.gz": "2026-10-31T00:07:49+00:00",
+  "epg_uk_ripper.xml.gz": "2026-10-31T10:38:48+00:00",
+  "epg_canada_pw.xml.gz": "2026-10-31T00:07:34+00:00",
+  "globetv_canada1.xml.gz": null,
+  "globetv_canada2.xml.gz": null,
+  "globetv_canada3.xml.gz": null,
+  "backup_plex_us.xml.gz": null,
+  "backup_us.xml.gz": "2026-10-31T07:34:42+00:00",
+  "backup_uk.xml.gz": "2026-10-31T07:36:03+00:00",
+  "backup_ca.xml.gz": "2026-10-31T07:36:45+00:00"
+ },
+ "backup": {
+  "sources": {
+   "backup_plex_us.xml.gz": "downloaded",
+   "backup_us.xml.gz": "downloaded",
+   "backup_uk.xml.gz": "downloaded",
+   "backup_ca.xml.gz": "downloaded"
+  },
+  "guide_ids_with_twin": 1588,
+  "channels_filled": 46
+ },
+ "skipped_duplicate_programmes": 97584,
+ "skipped_out_of_window_programmes": 33862,
+ "elapsed_minutes": 4.2
+}
