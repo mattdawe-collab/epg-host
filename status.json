@@ -1,0 +1,69 @@
+{
+ "generated_at": "2026-11-07T15:16:52+00:00",
+ "channel_list": "last night's list (provider blocks automated access)",
+ "channel_list_date": null,
+ "stale_nights": 41,
+ "failing_nights": 0,
+ "channels": 3816,
+ "programmes": 386614,
+ "channels_with_upcoming": 3767,
+ "size_mb": 21.9,
+ "days_ahead": 8.0,
+ "counts": {
+  "queued": 3771,
+  "no_guide_auto": 1299,
+  "auto": 844,
+  "carried": 1668,
+  "station": 1304
+ },
+ "score": {
+  "coverage": 0.503,
+  "fresh": 0.9872,
+  "accuracy": null,
+  "audited": 0,
+  "headline": 0.4965,
+  "headline_basis": "unaudited",
+  "flagged": 0,
+  "flag_examples": {}
+ },
+ "added_count": 0,
+ "added": [],
+ "removed_count": 0,
+ "removed": [],
+ "sources": {
+  "all_sources.xml.gz": "downloaded",
+  "us_locals.xml.gz": "downloaded",
+  "us_sports.xml.gz": "downloaded",
+  "epg_uk_pw.xml.gz": "downloaded",
+  "epg_uk_ripper.xml.gz": "downloaded",
+  "epg_canada_pw.xml.gz": "downloaded",
+  "globetv_canada1.xml.gz": "failed",
+  "globetv_canada2.xml.gz": "failed",
+  "globetv_canada3.xml.gz": "failed"
+ },
+ "source_updated": {
+  "all_sources.xml.gz": "2026-11-07T11:38:40+00:00",
+  "us_locals.xml.gz": "2026-11-07T11:39:06+00:00",
+  "us_sports.xml.gz": "2026-11-07T11:39:06+00:00",
+  "epg_uk_pw.xml.gz": "2026-11-07T00:07:59+00:00",
+  "epg_uk_ripper.xml.gz": "2026-11-07T11:38:58+00:00",
+  "epg_canada_pw.xml.gz": "2026-11-07T00:07:44+00:00",
+  "backup_plex_us.xml.gz": null,
+  "backup_us.xml.gz": "2026-11-07T15:12:10+00:00",
+  "backup_uk.xml.gz": "2026-11-07T15:16:57+00:00",
+  "backup_ca.xml.gz": "2026-11-07T15:16:58+00:00"
+ },
+ "backup": {
+  "sources": {
+   "backup_plex_us.xml.gz": "downloaded",
+   "backup_us.xml.gz": "downloaded",
+   "backup_uk.xml.gz": "downloaded",
+   "backup_ca.xml.gz": "downloaded"
+  },
+  "guide_ids_with_twin": 1589,
+  "channels_filled": 48
+ },
+ "skipped_duplicate_programmes": 96725,
+ "skipped_out_of_window_programmes": 32429,
+ "elapsed_minutes": 3.0
+}
